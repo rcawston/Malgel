@@ -17,8 +17,8 @@ mod workspace;
 use std::{path::PathBuf, sync::Arc};
 
 use gpui_kit::{
-    App, AppContext as _, Bounds, WindowBounds, WindowKind, WindowOptions, px, size,
-    component::{TitleBar, WindowExt as _},
+    App, AppContext as _, Bounds, WindowBounds, WindowKind, WindowOptions, component::TitleBar, px,
+    size,
 };
 
 use crate::{actions::*, settings::Settings, workspace::Workspace};
@@ -57,6 +57,15 @@ fn main() {
             });
             cx.on_action(|action: &SetTheme, cx: &mut App| themes::select_theme(&action.0, cx));
             cx.on_action(|_: &About, cx: &mut App| show_about(cx));
+
+            // Malgel is a single-window app: closing the window ends it on
+            // every platform, as the menu offers no way to open a new one.
+            cx.on_window_closed(|cx, _| {
+                if cx.windows().is_empty() {
+                    cx.quit();
+                }
+            })
+            .detach();
 
             open_window(path, app_menu_bar, cx);
             cx.activate(true);
@@ -101,19 +110,11 @@ fn open_window(
 }
 
 fn show_about(cx: &mut App) {
-    let Some(window) = cx.active_window() else {
+    let Some(window) = cx
+        .active_window()
+        .or_else(|| cx.windows().into_iter().next())
+    else {
         return;
     };
-    _ = window.update(cx, |_, window, cx| {
-        window.open_alert_dialog(cx, |alert, _, _| {
-            alert
-                .title("Malgel")
-                .description(concat!(
-                    "Version ",
-                    env!("CARGO_PKG_VERSION"),
-                    "\nA fast, native Markdown editor built with GPUI Kit."
-                ))
-                .ok_text("OK")
-        });
-    });
+    _ = window.update(cx, |_, window, cx| workspace::open_about(window, cx));
 }

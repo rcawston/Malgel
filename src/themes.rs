@@ -1,8 +1,9 @@
 //! Themes bundled with Malgel and the application-wide preferences global.
 
 use gpui_kit::{
-    App, Global, SharedString, Window, px,
+    App, Global, SharedString, Window,
     component::{Theme, ThemeMode, ThemeRegistry},
+    px,
 };
 
 use crate::settings::{Appearance, Settings, clamp_font_size};
@@ -119,8 +120,8 @@ pub fn select_theme(name: &SharedString, cx: &mut App) {
     };
     // Following the system stays in effect when the theme suits the current
     // appearance; otherwise switching to the theme means switching modes.
-    let follows_system = AppSettings::get(cx).appearance == Appearance::System
-        && Theme::global(cx).mode == mode;
+    let follows_system =
+        AppSettings::get(cx).appearance == Appearance::System && Theme::global(cx).mode == mode;
     AppSettings::update(cx, |settings| {
         if mode.is_dark() {
             settings.dark_theme = Some(name.to_string());

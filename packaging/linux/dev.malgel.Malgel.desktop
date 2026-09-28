@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Malgel
+GenericName=Markdown Editor
+Comment=Write and preview Markdown
+Exec=malgel %f
+Icon=text-markdown
+Terminal=false
+Categories=Office;TextEditor;Utility;
+MimeType=text/markdown;text/x-markdown;text/plain;
+StartupWMClass=dev.malgel.Malgel

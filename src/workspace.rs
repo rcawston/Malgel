@@ -6,14 +6,15 @@ use std::{
     time::Duration,
 };
 
+use gpui_kit::assets::IconName;
 use gpui_kit::{
-    App, AppContext as _, Context, Entity, ExternalPaths, FocusHandle, Focusable,
-    FontWeight, InteractiveElement as _, IntoElement, ListOffset, ParentElement as _, PathPromptOptions,
-    Pixels, Render, SharedString, Styled as _, Subscription, Task,
-    Window, div, point, prelude::FluentBuilder as _, px, rems,
+    App, AppContext as _, Context, Entity, ExternalPaths, FocusHandle, Focusable, FontWeight,
+    InteractiveElement as _, IntoElement, ListOffset, ParentElement as _, PathPromptOptions,
+    Pixels, Render, ScrollWheelEvent, SharedString, Styled as _, Subscription, Task, Window,
     base::{TextView, TextViewState},
     component::{
-        ActiveTheme as _, ElementExt as _, Icon, IndexPath, Selectable as _, Sizable as _, TitleBar, WindowExt as _,
+        ActiveTheme as _, ElementExt as _, Icon, IndexPath, Selectable as _, Sizable as _,
+        TitleBar, WindowExt as _,
         button::{Button, ButtonGroup, ButtonVariants as _},
         clipboard::Clipboard,
         command::{Command, CommandItem, CommandState},
@@ -24,10 +25,13 @@ use gpui_kit::{
         notification::Notification,
         resizable::{h_resizable, resizable_panel},
         status_bar::StatusBar,
+        text::{FrontmatterPlugin, MarkdownExtensions},
         v_flex,
     },
+    div, point,
+    prelude::FluentBuilder as _,
+    px, rems,
 };
-use gpui_kit::assets::IconName;
 
 use crate::{
     actions::*,
@@ -60,6 +64,9 @@ pub struct Workspace {
     focus_handle: FocusHandle,
     editor: Entity<EditorState>,
     preview: Entity<TextViewState>,
+    /// Parser configuration for the preview; built once so the preview can
+    /// tell that it is unchanged between frames.
+    markdown_extensions: MarkdownExtensions,
     headings: Entity<CommandState>,
     app_menu_bar: Entity<AppMenuBar>,
 
@@ -149,6 +156,9 @@ impl Workspace {
             focus_handle: cx.focus_handle(),
             editor,
             preview,
+            markdown_extensions: MarkdownExtensions::default()
+                .frontmatter()
+                .plugin(FrontmatterPlugin::new()),
             headings,
             app_menu_bar,
             path: None,
@@ -173,8 +183,12 @@ impl Workspace {
             None => this.load_text(WELCOME.to_string(), None, LineEnding::Lf, window, cx),
         }
 
-        let editor_focus = this.editor.focus_handle(cx);
-        window.defer(cx, move |window, cx| editor_focus.focus(window, cx));
+        let initial_focus = if settings.layout.shows_editor() {
+            this.editor.focus_handle(cx)
+        } else {
+            this.preview.read(cx).focus_handle().clone()
+        };
+        window.defer(cx, move |window, cx| initial_focus.focus(window, cx));
         this
     }
 
@@ -346,23 +360,24 @@ impl Workspace {
                                 .outline()
                                 .on_click(|_, window, cx| window.close_dialog(cx)),
                         )
-                        .child(
-                            Button::new("save")
-                                .label("Save")
-                                .primary()
-                                .on_click(move |_, window, cx| {
-                                    window.close_dialog(cx);
-                                    let next = save_next.clone();
-                                    _ = save.update(cx, |this, cx| {
-                                        this.save_then(Some(next), window, cx)
-                                    });
-                                }),
-                        ),
+                        .child(Button::new("save").label("Save").primary().on_click(
+                            move |_, window, cx| {
+                                window.close_dialog(cx);
+                                let next = save_next.clone();
+                                _ = save
+                                    .update(cx, |this, cx| this.save_then(Some(next), window, cx));
+                            },
+                        )),
                 )
         });
     }
 
-    fn run_after_confirm(&mut self, next: AfterConfirm, window: &mut Window, cx: &mut Context<Self>) {
+    fn run_after_confirm(
+        &mut self,
+        next: AfterConfirm,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         match next {
             AfterConfirm::NewFile => {
                 self.load_text(String::new(), None, LineEnding::Lf, window, cx);
@@ -434,7 +449,12 @@ impl Workspace {
 
     /// Save, asking for a location first when the document has none, then
     /// continue with `next`.
-    fn save_then(&mut self, next: Option<AfterConfirm>, window: &mut Window, cx: &mut Context<Self>) {
+    fn save_then(
+        &mut self,
+        next: Option<AfterConfirm>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         match self.path.clone() {
             Some(path) => {
                 if self.write_to(&path, window, cx)
@@ -489,7 +509,10 @@ impl Workspace {
             }
             Err(err) => {
                 self.notify_error(
-                    format!("Couldn’t save “{}”. {err}", display_name(Some(&path.to_path_buf()))),
+                    format!(
+                        "Couldn’t save “{}”. {err}",
+                        display_name(Some(&path.to_path_buf()))
+                    ),
                     window,
                     cx,
                 );
@@ -545,7 +568,12 @@ impl Workspace {
         .detach();
     }
 
-    fn reveal_in_folder(&mut self, _: &RevealInFolder, window: &mut Window, cx: &mut Context<Self>) {
+    fn reveal_in_folder(
+        &mut self,
+        _: &RevealInFolder,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         match &self.path {
             Some(path) => cx.reveal_path(path),
             None => window.push_notification(
@@ -555,7 +583,12 @@ impl Workspace {
         }
     }
 
-    fn on_drop_paths(&mut self, paths: &ExternalPaths, window: &mut Window, cx: &mut Context<Self>) {
+    fn on_drop_paths(
+        &mut self,
+        paths: &ExternalPaths,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(path) = paths
             .paths()
             .iter()
@@ -577,7 +610,11 @@ impl Workspace {
         if layout.shows_editor() {
             self.editor.focus_handle(cx).focus(window, cx);
         } else {
-            self.preview.read(cx).focus_handle().clone().focus(window, cx);
+            self.preview
+                .read(cx)
+                .focus_handle()
+                .clone()
+                .focus(window, cx);
         }
     }
 
@@ -597,8 +634,15 @@ impl Workspace {
         AppSettings::update(cx, |settings| settings.soft_wrap = !settings.soft_wrap);
     }
 
-    fn toggle_line_numbers(&mut self, _: &ToggleLineNumbers, _: &mut Window, cx: &mut Context<Self>) {
-        AppSettings::update(cx, |settings| settings.line_numbers = !settings.line_numbers);
+    fn toggle_line_numbers(
+        &mut self,
+        _: &ToggleLineNumbers,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        AppSettings::update(cx, |settings| {
+            settings.line_numbers = !settings.line_numbers
+        });
     }
 
     fn go_to_heading(&mut self, _: &GoToHeading, window: &mut Window, cx: &mut Context<Self>) {
@@ -617,33 +661,25 @@ impl Workspace {
                 .unwrap_or_default();
             let items = outline.iter().map(|heading| {
                 CommandItem::new()
-                    .label(format!(
-                        "{}{}",
-                        "    ".repeat(heading.level.saturating_sub(1) as usize),
-                        heading.text
-                    ))
+                    .label(heading.text.clone())
                     .keywords([heading.text.clone()])
                     .icon(heading_icon(heading.level))
             });
             let confirm = workspace.clone();
-            dialog
-                .close_button(false)
-                .p_0()
-                .child(
-                    Command::new(&headings)
-                        .bordered(false)
-                        .placeholder("Go to heading")
-                        .max_h(rems(24.))
-                        .items(items)
-                        .empty(|_, _, _| "No headings in this document")
-                        .on_confirm(move |index: IndexPath, window, cx| {
-                            window.close_dialog(cx);
-                            _ = confirm.update(cx, |this, cx| {
-                                this.reveal_heading(index.row, window, cx)
-                            });
-                        })
-                        .on_cancel(|window, cx| window.close_dialog(cx)),
-                )
+            dialog.close_button(false).p_0().child(
+                Command::new(&headings)
+                    .bordered(false)
+                    .placeholder("Go to heading")
+                    .max_h(rems(24.))
+                    .items(items)
+                    .empty(|_, _, _| "No headings in this document")
+                    .on_confirm(move |index: IndexPath, window, cx| {
+                        window.close_dialog(cx);
+                        _ = confirm
+                            .update(cx, |this, cx| this.reveal_heading(index.row, window, cx));
+                    })
+                    .on_cancel(|window, cx| window.close_dialog(cx)),
+            )
         });
     }
 
@@ -659,6 +695,22 @@ impl Workspace {
                     window,
                     cx,
                 );
+            });
+            // Revealing the caret scrolls just far enough to show it, often
+            // leaving the heading at the bottom edge. Once that frame is laid
+            // out, scroll the heading to the top of the editor instead.
+            let editor = self.editor.clone();
+            window.on_next_frame(move |_, cx| {
+                editor.update(cx, |editor, cx| {
+                    let Some((caret, _)) = editor.cursor_layout() else {
+                        return;
+                    };
+                    // Caret bounds are laid out before scrolling, so they
+                    // are content positions measured from the input's top.
+                    let offset = editor.scroll_offset();
+                    let target = (editor.input_bounds().top() - caret.top()).min(px(0.));
+                    editor.set_scroll_offset(point(offset.x, target), cx);
+                });
             });
         }
         if let Some((block, _)) = self.analysis.blocks.block_at_line(heading.line as f32) {
@@ -887,7 +939,11 @@ impl Workspace {
                             .ghost()
                             .small()
                             .compact()
-                            .icon(Icon::new(if is_dark { IconName::Sun } else { IconName::Moon }))
+                            .icon(Icon::new(if is_dark {
+                                IconName::Sun
+                            } else {
+                                IconName::Moon
+                            }))
                             .tooltip(if is_dark {
                                 "Use light appearance"
                             } else {
@@ -908,6 +964,17 @@ impl Workspace {
             .size_full()
             .bg(cx.theme().background)
             .font_family(cx.theme().mono_font_family.clone())
+            // The margins beside the text column belong to the editor too:
+            // the editor handles the wheel over its text, this handles the
+            // rest so the whole pane scrolls.
+            .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, window, cx| {
+                this.editor.update(cx, |editor, cx| {
+                    let line_height = editor.line_height().unwrap_or(window.line_height());
+                    let delta = event.delta.pixel_delta(line_height);
+                    let offset = editor.scroll_offset();
+                    editor.set_scroll_offset(point(offset.x, offset.y + delta.y), cx);
+                });
+            }))
             .child(
                 Editor::new(&self.editor)
                     .h_full()
@@ -944,11 +1011,23 @@ impl Workspace {
             .size_full()
             .relative()
             .bg(cx.theme().background)
+            // Let the margins beside the text column scroll the preview; the
+            // list scrolls itself when the pointer is over its viewport.
+            .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, window, cx| {
+                let list = this.preview.read(cx).list_state().clone();
+                if list.viewport_bounds().contains(&event.position) {
+                    return;
+                }
+                let delta = event.delta.pixel_delta(window.line_height());
+                list.scroll_by(-delta.y);
+                this.preview.update(cx, |_, cx| cx.notify());
+            }))
             .child(
                 TextView::new(&self.preview)
                     .size_full()
                     .scrollable(true)
                     .selectable(true)
+                    .markdown_extensions(self.markdown_extensions.clone())
                     .pl(inset)
                     .pr(inset)
                     .py_8()
@@ -1053,6 +1132,20 @@ impl Workspace {
     }
 }
 
+/// Show the version and a one-line description of Malgel.
+pub fn open_about(window: &mut Window, cx: &mut App) {
+    window.open_alert_dialog(cx, |alert, _, _| {
+        alert
+            .title("Malgel")
+            .description(concat!(
+                "Version ",
+                env!("CARGO_PKG_VERSION"),
+                ". A fast, native Markdown editor built with GPUI Kit."
+            ))
+            .ok_text("OK")
+    });
+}
+
 /// Horizontal inset that keeps text within a readable column, centered in a
 /// pane of `width`, but never tighter than the standard pane padding.
 fn column_inset(width: Pixels, cx: &App) -> Pixels {
@@ -1095,7 +1188,7 @@ fn group_thousands(value: usize) -> String {
     let digits = value.to_string();
     let mut out = String::with_capacity(digits.len() + digits.len() / 3);
     for (ix, ch) in digits.chars().enumerate() {
-        if ix > 0 && (digits.len() - ix) % 3 == 0 {
+        if ix > 0 && (digits.len() - ix).is_multiple_of(3) {
             out.push(',');
         }
         out.push(ch);
@@ -1112,6 +1205,16 @@ impl Focusable for Workspace {
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.update_window_title(window);
+        // Keyboard commands need a focused element inside the workspace; if
+        // focus was lost (e.g. its element left the layout), take it back.
+        if window.focused(cx).is_none() {
+            let focus = self.focus_handle.clone();
+            window.defer(cx, move |window, cx| {
+                if window.focused(cx).is_none() {
+                    focus.focus(window, cx);
+                }
+            });
+        }
         let layout = AppSettings::get(cx).layout;
 
         let content = match layout {
@@ -1153,6 +1256,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::toggle_line_numbers))
             .on_action(cx.listener(Self::toggle_appearance))
             .on_action(cx.listener(Self::go_to_heading))
+            .on_action(|_: &About, window, cx| open_about(window, cx))
             .on_action(cx.listener(|this, _: &ZoomIn, _, cx| this.zoom(1., cx)))
             .on_action(cx.listener(|this, _: &ZoomOut, _, cx| this.zoom(-1., cx)))
             .on_action(cx.listener(|this, _: &ZoomReset, _, cx| this.zoom(0., cx)))
@@ -1190,9 +1294,7 @@ impl Render for Workspace {
                 this.block(format::Block::TaskList, window, cx)
             }))
             .on_drop(cx.listener(Self::on_drop_paths))
-            .drag_over::<ExternalPaths>(|style, _, _, cx| {
-                style.bg(cx.theme().drop_target)
-            })
+            .drag_over::<ExternalPaths>(|style, _, _, cx| style.bg(cx.theme().drop_target))
             .child(self.render_title_bar(cx))
             .child(div().flex_1().min_h_0().overflow_hidden().child(content))
             .child(self.render_status_bar(cx))

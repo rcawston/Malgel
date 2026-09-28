@@ -135,7 +135,10 @@ mod tests {
         assert_eq!(loaded.line_ending, LineEnding::CrLf);
 
         save(&path, "# Title\n\nEdited\n", loaded.line_ending).unwrap();
-        assert_eq!(fs::read_to_string(&path).unwrap(), "# Title\r\n\r\nEdited\r\n");
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "# Title\r\n\r\nEdited\r\n"
+        );
         fs::remove_dir_all(&dir).unwrap();
     }
 

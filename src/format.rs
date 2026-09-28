@@ -233,9 +233,7 @@ fn split_marker(line: &str) -> (&str, &str, &str) {
         2
     } else if body.starts_with('>') {
         1
-    } else if body.starts_with("- [ ] ")
-        || body.starts_with("- [x] ")
-        || body.starts_with("- [X] ")
+    } else if body.starts_with("- [ ] ") || body.starts_with("- [x] ") || body.starts_with("- [X] ")
     {
         6
     } else if body.starts_with("- ") || body.starts_with("* ") || body.starts_with("+ ") {
@@ -259,7 +257,10 @@ fn marker_matches(marker: &str, style: Block) -> bool {
         Block::Quote => marker == ">",
         Block::BulletList => matches!(marker, "-" | "*" | "+"),
         Block::NumberedList => {
-            marker.ends_with('.') && marker[..marker.len() - 1].chars().all(|c| c.is_ascii_digit())
+            marker.ends_with('.')
+                && marker[..marker.len() - 1]
+                    .chars()
+                    .all(|c| c.is_ascii_digit())
         }
         Block::TaskList => marker.starts_with("- ["),
     }

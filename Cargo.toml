@@ -3,7 +3,6 @@ name = "malgel"
 version = "0.1.0"
 edition = "2024"
 description = "Malgel — a fast, native Markdown editor and previewer built with GPUI Kit."
-license = "Apache-2.0"
 publish = false
 
 [dependencies]
@@ -55,3 +54,4 @@ gpui-kit = { version = "0.7.0", features = ["test-support"] }
 lto = "thin"
 codegen-units = 1
 opt-level = 3
+strip = true
