@@ -79,7 +79,7 @@ impl AlertKind {
         })
     }
 
-    fn title(self) -> &'static str {
+    pub(crate) fn title(self) -> &'static str {
         match self {
             Self::Note => "Note",
             Self::Tip => "Tip",
@@ -89,7 +89,7 @@ impl AlertKind {
         }
     }
 
-    fn icon(self) -> IconName {
+    pub(crate) fn icon(self) -> IconName {
         match self {
             Self::Note => IconName::Info,
             Self::Tip => IconName::Lightbulb,
@@ -252,9 +252,9 @@ struct MathCache {
 
 /// Computer Modern has a smaller x-height than interface sans-serif fonts;
 /// scale formulas so they read at the same size as the text around them.
-const INLINE_MATH_SCALE: f32 = 1.15;
+pub(crate) const INLINE_MATH_SCALE: f32 = 1.15;
 /// Display formulas are set a little larger again, as in print.
-const DISPLAY_MATH_SCALE: f32 = 1.3;
+pub(crate) const DISPLAY_MATH_SCALE: f32 = 1.3;
 
 /// Formulas kept before the cache starts over.
 const MATH_CACHE_LIMIT: usize = 512;
@@ -353,7 +353,7 @@ struct BlockMathPlugin {
     cache: MathCache,
 }
 
-fn display_math_source(source: &str) -> Option<&str> {
+pub(crate) fn display_math_source(source: &str) -> Option<&str> {
     let body = source.trim().strip_prefix("$$")?.strip_suffix("$$")?.trim();
     (!body.is_empty()).then_some(body)
 }
@@ -429,7 +429,7 @@ struct InlineMathPlugin {
 /// Whether an inline `$…$` span is math. Like GitHub, prose such as
 /// "costs $5 and $10" is not: the content may not start or end with
 /// whitespace, and the closing dollar may not be followed by a digit.
-fn is_inline_math(value: &str, following: Option<char>) -> bool {
+pub(crate) fn is_inline_math(value: &str, following: Option<char>) -> bool {
     !value.is_empty()
         && !value.starts_with(char::is_whitespace)
         && !value.ends_with(char::is_whitespace)

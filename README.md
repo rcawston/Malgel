@@ -35,7 +35,9 @@ A fast, native Markdown editor and previewer written in pure Rust with
   handling, CRLF files stay CRLF, unsaved-changes prompts on new, open,
   close and quit, recent files, drag and drop to open.
 - **Export as HTML.** A standalone, self-styled page that follows the
-  reader's light/dark preference. Raw HTML in the source is escaped.
+  reader's light/dark preference. Alerts and math render as they do in the
+  preview (formulas are embedded as SVG), so the page needs no scripts or
+  network access. Raw HTML in the source is escaped.
 - **Themes.** Light, dark or follow the system, with bundled themes (Ayu,
   Catppuccin, Everforest, Flexoki, Gruvbox, macOS Classic, Solarized,
   Tokyo Night) selectable separately for light and dark.
