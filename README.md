@@ -10,8 +10,10 @@ A fast, native Markdown editor and previewer written in pure Rust with
 - **Editor and preview side by side.** A syntax-highlighted Markdown editor
   (tree-sitter) with line numbers, soft wrap, multi-cursor editing,
   find & replace and undo history, next to a live GitHub-flavored preview.
-- **The preview follows you.** Scrolling or typing in the editor keeps the
-  preview on the same block, so you always see what you are writing.
+- **Two-way scroll sync.** Scroll or type in the editor and the preview
+  stays on the same block; scroll the preview and the editor follows to the
+  matching source line. Whichever pane you are pointing at or typing in
+  leads, so the two never fight.
 - **Three layouts.** Editor only, editor and preview, or preview only
   (Ctrl+1/2/3). Single-pane layouts center a comfortable reading column.
 - **Rich preview.** Tables, task lists, strikethrough, fenced code with
@@ -46,6 +48,9 @@ A fast, native Markdown editor and previewer written in pure Rust with
 - The preview parses on a background thread; bursts of keystrokes are
   coalesced into one parse, and only the visible blocks are laid out and
   painted (virtualized list).
+- Scroll sync maps top-level blocks to source lines. Lines scrolled far out
+  of view are reached by an estimated jump that is corrected on the next
+  frame, once the target line is laid out.
 - Statistics, the heading outline and the scroll-sync index are computed in
   one debounced background pass; results from stale revisions are dropped.
 - Nothing polls: the UI redraws only when state changes, so an idle window

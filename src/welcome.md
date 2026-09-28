@@ -1,6 +1,6 @@
 # Welcome to Malgel
 
-Malgel is a fast, native Markdown editor. Write on the left and the preview on the right follows along as you type and scroll.
+Malgel is a fast, native Markdown editor. Write on the left and the preview on the right follows along as you type and scroll. Scroll the preview and the editor follows it.
 
 > Everything here is ordinary Markdown. Edit this page to try things out, or press **Ctrl+N** (**⌘N** on macOS) to start a new document.
 

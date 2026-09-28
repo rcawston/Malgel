@@ -9,12 +9,13 @@ use std::{
 use gpui_kit::assets::IconName;
 use gpui_kit::{
     App, AppContext as _, Context, Entity, ExternalPaths, FocusHandle, Focusable, FontWeight,
-    InteractiveElement as _, IntoElement, ListOffset, ParentElement as _, PathPromptOptions,
-    Pixels, Render, ScrollWheelEvent, SharedString, Styled as _, Subscription, Task, Window,
+    InteractiveElement as _, IntoElement, KeyDownEvent, ListOffset, MouseMoveEvent,
+    ParentElement as _, PathPromptOptions, Pixels, Render, ScrollWheelEvent, SharedString,
+    Styled as _, Subscription, Task, Window,
     base::{TextView, TextViewState},
     component::{
-        ActiveTheme as _, ElementExt as _, Icon, IndexPath, Selectable as _, Sizable as _,
-        TitleBar, WindowExt as _,
+        ActiveTheme as _, ElementExt as _, Icon, IndexPath, RopeExt as _, Selectable as _,
+        Sizable as _, TitleBar, WindowExt as _,
         button::{Button, ButtonGroup, ButtonVariants as _},
         clipboard::Clipboard,
         command::{Command, CommandItem, CommandState},
@@ -50,6 +51,32 @@ const READABLE_WIDTH_REMS: f32 = 46.;
 /// How long typing must pause before statistics and the outline refresh.
 const ANALYSIS_DEBOUNCE: Duration = Duration::from_millis(120);
 
+/// Which pane the other one follows while scroll sync is on.
+///
+/// The pane under the pointer, or the editor while typing, drives: its
+/// scrolling moves the other pane, and scrolling it causes (the follower's
+/// programmatic moves) never feed back.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum ScrollDriver {
+    #[default]
+    Editor,
+    Preview,
+}
+
+/// A source position the editor is being scrolled to.
+///
+/// Lines off screen have no layout to measure, so the editor first jumps to
+/// an estimate; once the line is laid out, the next pass lands on it exactly.
+#[derive(Clone, Copy, Debug)]
+struct EditorScrollTarget {
+    /// Zero-based source line, with the fraction through it.
+    line: f32,
+    attempts: u8,
+}
+
+/// Estimated jumps allowed before giving up on landing a target exactly.
+const MAX_EDITOR_SCROLL_ATTEMPTS: u8 = 4;
+
 /// What to do once unsaved changes have been saved or discarded.
 #[derive(Clone)]
 enum AfterConfirm {
@@ -81,8 +108,12 @@ pub struct Workspace {
     analysis: Arc<Analysis>,
     analysis_task: Option<Task<()>>,
 
+    scroll_driver: ScrollDriver,
     /// Editor scroll position the preview was last aligned with.
     synced_editor_scroll: Option<(usize, Pixels)>,
+    /// Preview scroll position the editor was last aligned with.
+    synced_preview_scroll: Option<ListOffset>,
+    editor_scroll_target: Option<EditorScrollTarget>,
     /// Row count of the preview when it was last aligned.
     synced_preview_rows: usize,
     /// Measured widths used to center the text column.
@@ -169,7 +200,10 @@ impl Workspace {
             revision: 0,
             analysis: Arc::default(),
             analysis_task: None,
+            scroll_driver: ScrollDriver::Editor,
             synced_editor_scroll: None,
+            synced_preview_scroll: None,
+            editor_scroll_target: None,
             synced_preview_rows: 0,
             editor_width: px(0.),
             preview_width: px(0.),
@@ -226,6 +260,7 @@ impl Workspace {
         self.source = source;
         // Assume an edit until the analysis can tell the text matches disk.
         self.dirty = true;
+        self.set_scroll_driver(ScrollDriver::Editor);
         self.revision += 1;
         self.schedule_analysis(debounce, cx);
         cx.notify();
@@ -689,6 +724,8 @@ impl Workspace {
         };
         let layout = AppSettings::get(cx).layout;
         if layout.shows_editor() {
+            // The editor places the heading exactly; the preview follows it.
+            self.set_scroll_driver(ScrollDriver::Editor);
             self.editor.update(cx, |editor, cx| {
                 editor.set_cursor_position(
                     gpui_kit::component::input::Position::new(heading.line as u32, 0),
@@ -786,14 +823,26 @@ impl Workspace {
     // ---------------------------------------------------------------------
     // Scroll sync
 
+    fn set_scroll_driver(&mut self, driver: ScrollDriver) {
+        if self.scroll_driver != driver {
+            self.scroll_driver = driver;
+            // A pending jump belongs to the pane that stopped driving.
+            self.editor_scroll_target = None;
+        }
+    }
+
+    fn syncs_scrolling(&self, cx: &App) -> bool {
+        let settings = AppSettings::get(cx);
+        settings.scroll_sync && settings.layout == Layout::Split
+    }
+
     /// Scroll the preview to the block at the top of the editor.
     ///
-    /// Only the editor drives the preview: reading in the preview never moves
-    /// the editor, and the preview is only realigned when the editor scrolls
-    /// or the document's structure changes.
+    /// Runs when the editor scrolls or the document's structure changes. While
+    /// the preview drives, it only records where the editor is, so the
+    /// editor's catching up is not mistaken for the user scrolling it.
     fn sync_preview(&mut self, force: bool, cx: &mut Context<Self>) {
-        let settings = AppSettings::get(cx);
-        if !settings.scroll_sync || settings.layout != Layout::Split {
+        if !self.syncs_scrolling(cx) {
             return;
         }
         let editor = self.editor.read(cx);
@@ -802,6 +851,10 @@ impl Workspace {
         };
         let offset_y = editor.scroll_offset().y;
         let position = (rows.start, offset_y);
+        if self.scroll_driver != ScrollDriver::Editor {
+            self.synced_editor_scroll = Some(position);
+            return;
+        }
         if !force && self.synced_editor_scroll == Some(position) {
             return;
         }
@@ -842,7 +895,91 @@ impl Workspace {
             let max = list.max_offset_for_scrollbar().y;
             list.set_offset_from_scrollbar(point(px(0.), -(max * fraction)));
         }
+        self.synced_preview_scroll = Some(list.logical_scroll_top());
         self.preview.update(cx, |_, cx| cx.notify());
+    }
+
+    /// Scroll the editor to the source of the block at the top of the
+    /// preview. Runs after every frame the preview paints, so it catches
+    /// wheel, trackpad, scrollbar and keyboard scrolling alike.
+    fn sync_editor(&mut self, cx: &mut Context<Self>) {
+        if !self.syncs_scrolling(cx) || self.scroll_driver != ScrollDriver::Preview {
+            return;
+        }
+        let list = self.preview.read(cx).list_state().clone();
+        let top = list.logical_scroll_top();
+        let moved = self.synced_preview_scroll.is_none_or(|synced| {
+            synced.item_ix != top.item_ix
+                || (synced.offset_in_item - top.offset_in_item).abs() > px(0.5)
+        });
+        if moved {
+            self.synced_preview_scroll = Some(top);
+            let blocks = &self.analysis.blocks;
+            let line = if top.item_ix == 0 && top.offset_in_item <= px(0.5) {
+                Some(0.)
+            } else if blocks.len() == list.item_count() {
+                // The top row is at the scroll top, so its bounds are known.
+                let height = list
+                    .bounds_for_item(top.item_ix)
+                    .map_or(px(0.), |bounds| bounds.size.height);
+                let fraction = if height > px(0.) {
+                    top.offset_in_item / height
+                } else {
+                    0.
+                };
+                blocks.line_at_block(top.item_ix, fraction)
+            } else {
+                let max = list.max_offset_for_scrollbar().y;
+                let scrolled = -list.scroll_px_offset_for_scrollbar().y;
+                let fraction = if max > px(0.) { scrolled / max } else { 0. };
+                Some(fraction.clamp(0., 1.) * self.analysis.stats.lines as f32)
+            };
+            self.editor_scroll_target = line.map(|line| EditorScrollTarget { line, attempts: 0 });
+        }
+        self.scroll_editor_to_target(cx);
+    }
+
+    /// Move the editor toward [`Self::editor_scroll_target`]: exactly when
+    /// the target line is laid out, by estimate otherwise.
+    fn scroll_editor_to_target(&mut self, cx: &mut Context<Self>) {
+        let Some(mut target) = self.editor_scroll_target else {
+            return;
+        };
+        let mut landed = false;
+        self.editor.update(cx, |editor, cx| {
+            let Some(rows) = editor.visible_row_range() else {
+                return;
+            };
+            let text = editor.text();
+            let last_line = text.lines_len().saturating_sub(1);
+            let line = (target.line.max(0.).floor() as usize).min(last_line);
+            let within_line = (target.line - line as f32).clamp(0., 1.);
+            let line_range = text.line_start_offset(line)..text.line_end_offset(line);
+            let offset = editor.scroll_offset();
+
+            let desired = match (editor.range_to_bounds(&line_range), editor.text_bounds()) {
+                (Some(line_bounds), Some(text_bounds)) => {
+                    // Content position of the line: measured from the text
+                    // origin, which moves with the scroll offset.
+                    landed = true;
+                    let top = line_bounds.top() - text_bounds.top();
+                    -(top + line_bounds.size.height * within_line)
+                }
+                _ => {
+                    // Off screen: estimate from the lines visible now.
+                    let visible_lines = rows.len().max(1) as f32;
+                    let per_line = editor.input_bounds().size.height / visible_lines;
+                    offset.y - per_line * (line as f32 + within_line - rows.start as f32)
+                }
+            };
+            let desired = desired.min(px(0.));
+            if (desired - offset.y).abs() > px(0.5) {
+                editor.set_scroll_offset(point(offset.x, desired), cx);
+            }
+        });
+        target.attempts += 1;
+        self.editor_scroll_target =
+            (!landed && target.attempts < MAX_EDITOR_SCROLL_ATTEMPTS).then_some(target);
     }
 
     // ---------------------------------------------------------------------
@@ -967,7 +1104,14 @@ impl Workspace {
             // The margins beside the text column belong to the editor too:
             // the editor handles the wheel over its text, this handles the
             // rest so the whole pane scrolls.
+            .on_mouse_move(cx.listener(|this, _: &MouseMoveEvent, _, _| {
+                this.set_scroll_driver(ScrollDriver::Editor)
+            }))
+            .capture_key_down(cx.listener(|this, _: &KeyDownEvent, _, _| {
+                this.set_scroll_driver(ScrollDriver::Editor)
+            }))
             .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, window, cx| {
+                this.set_scroll_driver(ScrollDriver::Editor);
                 this.editor.update(cx, |editor, cx| {
                     let line_height = editor.line_height().unwrap_or(window.line_height());
                     let delta = event.delta.pixel_delta(line_height);
@@ -1013,7 +1157,14 @@ impl Workspace {
             .bg(cx.theme().background)
             // Let the margins beside the text column scroll the preview; the
             // list scrolls itself when the pointer is over its viewport.
+            .on_mouse_move(cx.listener(|this, _: &MouseMoveEvent, _, _| {
+                this.set_scroll_driver(ScrollDriver::Preview)
+            }))
+            .capture_key_down(cx.listener(|this, _: &KeyDownEvent, _, _| {
+                this.set_scroll_driver(ScrollDriver::Preview)
+            }))
             .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, window, cx| {
+                this.set_scroll_driver(ScrollDriver::Preview);
                 let list = this.preview.read(cx).list_state().clone();
                 if list.viewport_bounds().contains(&event.position) {
                     return;
@@ -1068,6 +1219,7 @@ impl Workspace {
                             this.preview_width = bounds.size.width;
                             cx.notify();
                         }
+                        this.sync_editor(cx);
                     });
                 });
             })

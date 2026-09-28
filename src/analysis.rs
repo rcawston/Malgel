@@ -135,6 +135,13 @@ impl BlockIndex {
         Some((ix, fraction))
     }
 
+    /// The source line `fraction` of the way through block `ix`.
+    pub fn line_at_block(&self, ix: usize, fraction: f32) -> Option<f32> {
+        let start = *self.starts.get(ix)? as f32;
+        let end = self.block_end(ix) as f32;
+        Some(start + (end - start) * fraction.clamp(0., 1.))
+    }
+
     /// The first line after block `ix`: where the next block starts, or the
     /// end of the document for the last block.
     fn block_end(&self, ix: usize) -> usize {
@@ -278,6 +285,8 @@ mod tests {
         assert_eq!(index.block_at_line(0.), Some((0, 0.)));
         assert_eq!(index.block_at_line(6.), Some((1, 0.5)));
         assert_eq!(index.block_at_line(15.), Some((2, 0.5)));
+        assert_eq!(index.line_at_block(1, 0.5), Some(6.));
+        assert_eq!(index.line_at_block(3, 0.), None);
         assert_eq!(BlockIndex::default().block_at_line(3.), None);
     }
 
