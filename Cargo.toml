@@ -45,6 +45,14 @@ reqwest_client = { package = "gpui-pre-reqwest-client", version = "=0.3.7" }
 # Same Markdown parser the preview uses; drives HTML export and scroll-sync block indexing.
 markdown = "1.0.0"
 serde = { version = "1", features = ["derive"] }
+# Math rendering, all pure Rust: LaTeX is translated to Typst math, laid out
+# by the Typst compiler with its bundled math fonts, and drawn as SVG.
+tex2typst-rs = "0.4.1"
+typst = "0.15.1"
+typst-assets = { version = "0.15.1", features = ["fonts"] }
+comemo = "0.5"
+typst-layout = "0.15.1"
+typst-svg = "0.15.1"
 serde_json = "1"
 
 [dev-dependencies]

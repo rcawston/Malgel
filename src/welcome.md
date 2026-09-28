@@ -27,6 +27,17 @@ fn main() {
 
 Code blocks are highlighted for most popular languages, and each one has a copy button.
 
+## Alerts and math
+
+> [!TIP]
+> GitHub alerts work: start a quote with `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]` or `[!CAUTION]`.
+
+Write math with LaTeX, inline like $e^{i\pi} + 1 = 0$ or on its own line:
+
+$$
+\int_0^1 x^2 \, dx = \frac{1}{3}
+$$
+
 ## Tables
 
 | Command            | Linux and Windows | macOS  |

@@ -26,7 +26,7 @@ use gpui_kit::{
         notification::Notification,
         resizable::{h_resizable, resizable_panel},
         status_bar::StatusBar,
-        text::{FrontmatterPlugin, MarkdownExtensions},
+        text::MarkdownExtensions,
         v_flex,
     },
     div, point,
@@ -38,7 +38,7 @@ use crate::{
     actions::*,
     analysis::{Analysis, content_hash},
     document::{self, LineEnding, display_name, is_markdown_path},
-    export, format, images,
+    export, format, images, preview_ext,
     settings::{Appearance, Layout, clamp_font_size},
     themes::{self, AppSettings},
 };
@@ -186,10 +186,8 @@ impl Workspace {
         let mut this = Self {
             focus_handle: cx.focus_handle(),
             editor,
+            markdown_extensions: preview_ext::markdown_extensions(&preview),
             preview,
-            markdown_extensions: MarkdownExtensions::default()
-                .frontmatter()
-                .plugin(FrontmatterPlugin::new()),
             headings,
             app_menu_bar,
             path: None,

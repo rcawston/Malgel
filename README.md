@@ -20,6 +20,13 @@ A fast, native Markdown editor and previewer written in pure Rust with
   highlighting for 28 languages and a copy button, YAML front matter shown as
   a property list, local images (relative to the document), remote images
   and `data:` URLs.
+- **GitHub alerts.** `> [!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]` and
+  `[!CAUTION]` render as themed callouts.
+- **Math.** LaTeX formulas, inline (`$…$`) and display (`$$…$$`), are
+  typeset in pure Rust: LaTeX is translated to Typst math and laid out by the
+  Typst compiler with its bundled New Computer Modern Math font. Formulas sit
+  on the text baseline, follow the theme's text color, render on a background
+  thread and are cached. Prices like "$5 and $10" stay text.
 - **Formatting commands.** Bold, italic, strikethrough, inline code, links,
   headings, quotes, bulleted/numbered/task lists and code blocks — each
   toggles, and works on the selection or the word under the caret.
@@ -39,6 +46,8 @@ A fast, native Markdown editor and previewer written in pure Rust with
 | Tokyo Night | Outline palette on Catppuccin Mocha |
 | --- | --- |
 | ![Dark appearance](docs/screenshot-dark.png) | ![Go to heading](docs/screenshot-outline.png) |
+
+![GitHub alerts and math on Catppuccin Mocha](docs/screenshot-alerts-math.png)
 
 ## Performance
 
@@ -125,6 +134,8 @@ Set `MALGEL_CONFIG_DIR` to use another folder.
 | `src/document.rs` | Loading and atomically saving files, line endings |
 | `src/export.rs` | HTML export |
 | `src/images.rs` | Resolving image URLs relative to the document |
+| `src/preview_ext.rs` | Preview plugins: GitHub alerts, block and inline math |
+| `src/math.rs` | LaTeX → Typst → SVG formula rendering |
 | `src/menus.rs`, `src/actions.rs` | Menus, actions and key bindings |
 | `src/settings.rs`, `src/themes.rs` | Preferences and theme application |
 
