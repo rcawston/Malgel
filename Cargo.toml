@@ -1,0 +1,57 @@
+[package]
+name = "malgel"
+version = "0.1.0"
+edition = "2024"
+description = "Malgel — a fast, native Markdown editor and previewer built with GPUI Kit."
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+# GPUI Kit is the only UI dependency: it re-exports GPUI, GPUI Base and GPUI Component.
+gpui-kit = { version = "0.7.0", features = [
+    "tree-sitter",
+    "tree-sitter-markdown",
+    "tree-sitter-markdown-inline",
+    "tree-sitter-rust",
+    "tree-sitter-python",
+    "tree-sitter-javascript",
+    "tree-sitter-typescript",
+    "tree-sitter-tsx",
+    "tree-sitter-bash",
+    "tree-sitter-go",
+    "tree-sitter-c",
+    "tree-sitter-cpp",
+    "tree-sitter-html",
+    "tree-sitter-css",
+    "tree-sitter-toml",
+    "tree-sitter-yaml",
+    "tree-sitter-java",
+    "tree-sitter-ruby",
+    "tree-sitter-diff",
+    "tree-sitter-swift",
+    "tree-sitter-kotlin",
+    "tree-sitter-zig",
+    "tree-sitter-lua",
+    "tree-sitter-csharp",
+    "tree-sitter-php",
+    "tree-sitter-scala",
+    "tree-sitter-elixir",
+    "tree-sitter-graphql",
+    "tree-sitter-make",
+    "tree-sitter-cmake",
+    "tree-sitter-proto",
+] }
+# Loads remote (http/https) images referenced by documents, e.g. README badges.
+reqwest_client = { package = "gpui-pre-reqwest-client", version = "=0.3.7" }
+# Same Markdown parser the preview uses; drives HTML export and scroll-sync block indexing.
+markdown = "1.0.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+gpui-kit = { version = "0.7.0", features = ["test-support"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+opt-level = 3
