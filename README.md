@@ -34,10 +34,19 @@ A fast, native Markdown editor and previewer written in pure Rust with
 - **Documents done right.** Atomic saves, UTF-8 with byte-order-mark
   handling, CRLF files stay CRLF, unsaved-changes prompts on new, open,
   close and quit, recent files, drag and drop to open.
-- **Export as HTML.** A standalone, self-styled page that follows the
-  reader's light/dark preference. Alerts and math render as they do in the
-  preview (formulas are embedded as SVG), so the page needs no scripts or
-  network access. Raw HTML in the source is escaped.
+- **Export as HTML, PDF and Word.** All three render alerts and math as the
+  preview does, embed local images, and work offline.
+  - *HTML*: a standalone, self-styled page that follows the reader's
+    light/dark preference, with formulas embedded as SVG. Raw HTML in the
+    source is escaped.
+  - *PDF*: typeset by the Typst compiler, in-process: Libertinus Serif body
+    text, vector math, footnotes, repeating table headers, and installed
+    fonts as a fallback for CJK, emoji and other scripts. Paper follows the
+    system locale: US Letter where it's standard, A4 elsewhere.
+  - *Word (.docx)*: real heading styles (so the navigation pane works), Word
+    lists and footnotes, tables with repeating headers, code blocks and
+    alerts as shaded boxes, and formulas as high-resolution images aligned
+    to the text baseline.
 - **Themes.** Light, dark or follow the system, with bundled themes (Ayu,
   Catppuccin, Everforest, Flexoki, Gruvbox, macOS Classic, Solarized,
   Tokyo Night) selectable separately for light and dark.
@@ -135,9 +144,12 @@ Set `MALGEL_CONFIG_DIR` to use another folder.
 | `src/format.rs` | Formatting commands as pure, tested text transforms |
 | `src/document.rs` | Loading and atomically saving files, line endings |
 | `src/export.rs` | HTML export |
-| `src/images.rs` | Resolving image URLs relative to the document |
+| `src/pdf.rs` | PDF export: Markdown → Typst markup → PDF |
+| `src/docx.rs` | Word export |
+| `src/typst_world.rs` | The sandboxed Typst environment shared by math and PDF export |
+| `src/images.rs` | Resolving and loading image URLs relative to the document |
 | `src/preview_ext.rs` | Preview plugins: GitHub alerts, block and inline math |
-| `src/math.rs` | LaTeX → Typst → SVG formula rendering |
+| `src/math.rs` | LaTeX → Typst → SVG/PNG formula rendering |
 | `src/menus.rs`, `src/actions.rs` | Menus, actions and key bindings |
 | `src/settings.rs`, `src/themes.rs` | Preferences and theme application |
 

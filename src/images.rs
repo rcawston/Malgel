@@ -49,6 +49,57 @@ pub fn local_path(url: &str, base_dir: Option<&Path>) -> Option<PathBuf> {
     })
 }
 
+/// An image embedded into an exported document.
+pub struct ImageData {
+    pub bytes: Vec<u8>,
+    /// Lowercase file extension naming the format: `png`, `jpg`, `gif`,
+    /// `webp`, `svg` or `bmp`.
+    pub extension: &'static str,
+}
+
+/// Read the image `url` points at, for embedding into an export. Remote
+/// images are not fetched; exports stay offline and deterministic.
+pub fn load(url: &str, base_dir: Option<&Path>) -> Option<ImageData> {
+    let bytes = match url.strip_prefix("data:") {
+        Some(data) => data_url_bytes(data)?.0,
+        None => std::fs::read(local_path(url, base_dir)?).ok()?,
+    };
+    let extension = sniff_format(&bytes)?;
+    Some(ImageData { bytes, extension })
+}
+
+/// Identify an image format from its first bytes.
+fn sniff_format(bytes: &[u8]) -> Option<&'static str> {
+    let head = &bytes[..bytes.len().min(512)];
+    Some(if head.starts_with(b"\x89PNG") {
+        "png"
+    } else if head.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        "jpg"
+    } else if head.starts_with(b"GIF8") {
+        "gif"
+    } else if head.len() >= 12 && &head[..4] == b"RIFF" && &head[8..12] == b"WEBP" {
+        "webp"
+    } else if head.starts_with(b"BM") {
+        "bmp"
+    } else if String::from_utf8_lossy(head).contains("<svg") {
+        "svg"
+    } else {
+        return None;
+    })
+}
+
+/// The bytes and MIME type of a `data:` URL (without the `data:` prefix).
+fn data_url_bytes(data: &str) -> Option<(Vec<u8>, &str)> {
+    let (meta, payload) = data.split_once(',')?;
+    let mime = meta.split(';').next()?;
+    let bytes = if meta.ends_with(";base64") {
+        decode_base64(payload)?
+    } else {
+        percent_decode(payload).into_bytes()
+    };
+    Some((bytes, mime))
+}
+
 fn decode_data_url(data: &str) -> Option<Arc<Image>> {
     static CACHE: OnceLock<Mutex<HashMap<u64, Arc<Image>>>> = OnceLock::new();
     let key = content_hash(data);
@@ -57,15 +108,9 @@ fn decode_data_url(data: &str) -> Option<Arc<Image>> {
         return Some(image.clone());
     }
 
-    let (meta, payload) = data.split_once(',')?;
-    let mime = meta.split(';').next()?;
+    let (bytes, mime) = data_url_bytes(data)?;
     let format = ImageFormat::from_mime_type(mime)
         .or_else(|| (mime == "image/svg").then_some(ImageFormat::Svg))?;
-    let bytes = if meta.ends_with(";base64") {
-        decode_base64(payload)?
-    } else {
-        percent_decode(payload).into_bytes()
-    };
 
     let image = Arc::new(Image::from_bytes(format, bytes));
     if let Ok(mut cache) = cache.lock() {
@@ -147,6 +192,15 @@ mod tests {
             Some(PathBuf::from("/tmp/x.png"))
         );
         assert_eq!(local_path("https://example.com/x.png", Some(base)), None);
+    }
+
+    #[test]
+    fn loads_images_for_export() {
+        let png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+        let image = load(png, None).unwrap();
+        assert_eq!(image.extension, "png");
+        assert!(load("https://example.com/a.png", None).is_none());
+        assert!(load("missing.png", Some(Path::new("/nonexistent"))).is_none());
     }
 
     #[test]

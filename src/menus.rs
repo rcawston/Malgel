@@ -91,7 +91,10 @@ pub fn build(cx: &App) -> Vec<Menu> {
         MenuItem::separator(),
         MenuItem::action("Save", Save),
         MenuItem::action("Save as…", SaveAs),
+        MenuItem::separator(),
         MenuItem::action("Export as HTML…", ExportHtml),
+        MenuItem::action("Export as PDF…", ExportPdf),
+        MenuItem::action("Export as Word document…", ExportDocx),
         MenuItem::separator(),
         MenuItem::action(
             if macos {

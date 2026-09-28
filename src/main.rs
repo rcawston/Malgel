@@ -6,14 +6,17 @@
 mod actions;
 mod analysis;
 mod document;
+mod docx;
 mod export;
 mod format;
 mod images;
 mod math;
 mod menus;
+mod pdf;
 mod preview_ext;
 mod settings;
 mod themes;
+mod typst_world;
 mod workspace;
 
 use std::{path::PathBuf, sync::Arc};

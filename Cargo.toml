@@ -45,18 +45,38 @@ reqwest_client = { package = "gpui-pre-reqwest-client", version = "=0.3.7" }
 # Same Markdown parser the preview uses; drives HTML export and scroll-sync block indexing.
 markdown = "1.0.0"
 serde = { version = "1", features = ["derive"] }
+# System fonts give exported PDFs coverage the bundled fonts lack (CJK, emoji).
+fontdb = "0.23"
+# Picks A4 or US Letter for exports from the system locale.
+sys-locale = "0.3"
+# Word export. `image` converts pictures to PNG and `zip` finishes the
+# package; docx-rs already builds both.
+docx-rs = "0.4.22"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 # Math rendering, all pure Rust: LaTeX is translated to Typst math, laid out
-# by the Typst compiler with its bundled math fonts, and drawn as SVG.
+# by the Typst compiler with its bundled math fonts, and drawn as SVG (or PNG
+# for Word). PDF export compiles whole documents with the same compiler.
 tex2typst-rs = "0.4.1"
 typst = "0.15.1"
 typst-assets = { version = "0.15.1", features = ["fonts"] }
 comemo = "0.5"
 typst-layout = "0.15.1"
+typst-pdf = "0.15.1"
+typst-render = "0.15.1"
 typst-svg = "0.15.1"
 serde_json = "1"
 
 [dev-dependencies]
 gpui-kit = { version = "0.7.0", features = ["test-support"] }
+
+# Dependencies are large (GPUI, tree-sitter grammars, Typst); full debug info
+# for them makes every test binary hundreds of megabytes.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
 
 [profile.release]
 lto = "thin"

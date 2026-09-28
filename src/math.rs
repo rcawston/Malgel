@@ -5,18 +5,10 @@
 //! exported as SVG. Nothing here touches the file system or the network: the
 //! compiler runs in a sealed world that only knows the formula's own source.
 
-use std::sync::LazyLock;
+use typst::layout::{Abs, Frame, FrameItem};
+use typst_layout::Page;
 
-use typst::{
-    Library, LibraryExt as _, World,
-    diag::{FileError, FileResult},
-    foundations::{Bytes, Datetime, Duration},
-    layout::{Abs, Frame, FrameItem},
-    syntax::{FileId, Source},
-    text::{Font, FontBook},
-    utils::LazyHash,
-};
-use typst_layout::PagedDocument;
+use crate::typst_world::{self, VirtualFiles};
 
 /// A rendered formula. Sizes are in the pixels the formula was laid out for.
 #[derive(Debug, Clone)]
@@ -37,15 +29,57 @@ pub enum MathStyle {
     Display,
 }
 
+/// A formula rasterized as PNG, for formats that can't embed SVG.
+pub struct MathPng {
+    pub png: Vec<u8>,
+    /// Size and baseline in points, as laid out (not in image pixels).
+    pub width: f32,
+    pub height: f32,
+    pub baseline: f32,
+}
+
 /// Render the LaTeX formula `tex` at `font_size` pixels in `color`
 /// (`#rrggbbaa`). Returns a message suitable for the user on failure.
 pub fn render(tex: &str, style: MathStyle, font_size: f32, color: &str) -> Result<MathSvg, String> {
+    let page = layout(tex, style, font_size, color)?;
+    let size = page.frame.size();
+    Ok(MathSvg {
+        svg: typst_svg::svg(&page, &typst_svg::SvgOptions::default()),
+        width: size.x.to_pt() as f32,
+        height: size.y.to_pt() as f32,
+        baseline: baseline(&page.frame).to_pt() as f32,
+    })
+}
+
+/// Render `tex` as a PNG with `pixels_per_point` pixels for every point of
+/// its laid-out size, so it stays sharp when printed.
+pub fn render_png(
+    tex: &str,
+    style: MathStyle,
+    font_size: f32,
+    color: &str,
+    pixels_per_point: f32,
+) -> Result<MathPng, String> {
+    let page = layout(tex, style, font_size, color)?;
+    let size = page.frame.size();
+    let png = typst_world::rasterize(&page, pixels_per_point)?;
+    Ok(MathPng {
+        png,
+        width: size.x.to_pt() as f32,
+        height: size.y.to_pt() as f32,
+        baseline: baseline(&page.frame).to_pt() as f32,
+    })
+}
+
+fn layout(tex: &str, style: MathStyle, font_size: f32, color: &str) -> Result<Page, String> {
     let math = tex2typst_rs::tex2typst(tex.trim())
         .map_err(|err| format!("Couldn’t read the formula: {err}."))?;
     let body = match style {
         // Spaces inside the dollars make Typst lay out a display equation.
         MathStyle::Display => format!("$ {math} $"),
-        MathStyle::Inline => format!("${math}$"),
+        // A box keeps the formula's baseline in the page frame, which
+        // Typst otherwise flattens away for single-term formulas.
+        MathStyle::Inline => format!("#box[${math}$]"),
     };
     let source = format!(
         "#set page(width: auto, height: auto, margin: 0pt, fill: none)\n\
@@ -54,34 +88,13 @@ pub fn render(tex: &str, style: MathStyle, font_size: f32, color: &str) -> Resul
          {body}\n"
     );
 
-    let world = MathWorld {
-        source: Source::detached(source),
-    };
-    let document = typst::compile::<PagedDocument>(&world)
-        .output
-        .map_err(|errors| {
-            errors
-                .first()
-                .map(|error| format!("Couldn’t typeset the formula: {}.", error.message))
-                .unwrap_or_else(|| "Couldn’t typeset the formula.".to_string())
-        });
-    // Typst memoizes layout across compilations; keep only recent entries so
-    // many distinct formulas don't accumulate.
-    comemo::evict(30);
-    let document = document?;
-
-    let page = document
+    let document = typst_world::compile(source, VirtualFiles::new(), &typst_world::BUNDLED_FONTS)
+        .map_err(|error| format!("Couldn’t typeset the formula: {error}."))?;
+    document
         .pages()
         .first()
-        .ok_or_else(|| "The formula is empty.".to_string())?;
-    let size = page.frame.size();
-    let svg = typst_svg::svg(page, &typst_svg::SvgOptions::default());
-    Ok(MathSvg {
-        svg,
-        width: size.x.to_pt() as f32,
-        height: size.y.to_pt() as f32,
-        baseline: baseline(&page.frame).to_pt() as f32,
-    })
+        .cloned()
+        .ok_or_else(|| "The formula is empty.".to_string())
 }
 
 /// The baseline of the first line of `frame`: the page holds a paragraph
@@ -101,54 +114,6 @@ fn baseline(frame: &Frame) -> Abs {
     frame.baseline()
 }
 
-static LIBRARY: LazyLock<LazyHash<Library>> = LazyLock::new(|| LazyHash::new(Library::default()));
-
-static FONTS: LazyLock<(LazyHash<FontBook>, Vec<Font>)> = LazyLock::new(|| {
-    let fonts: Vec<Font> = typst_assets::fonts()
-        .flat_map(|data| Font::iter(Bytes::new(data)))
-        .collect();
-    (LazyHash::new(FontBook::from_fonts(&fonts)), fonts)
-});
-
-/// A Typst world containing a single source file and the bundled fonts.
-struct MathWorld {
-    source: Source,
-}
-
-impl World for MathWorld {
-    fn library(&self) -> &LazyHash<Library> {
-        &LIBRARY
-    }
-
-    fn book(&self) -> &LazyHash<FontBook> {
-        &FONTS.0
-    }
-
-    fn main(&self) -> FileId {
-        self.source.id()
-    }
-
-    fn source(&self, id: FileId) -> FileResult<Source> {
-        if id == self.source.id() {
-            Ok(self.source.clone())
-        } else {
-            Err(FileError::AccessDenied)
-        }
-    }
-
-    fn file(&self, _: FileId) -> FileResult<Bytes> {
-        Err(FileError::AccessDenied)
-    }
-
-    fn font(&self, index: usize) -> Option<Font> {
-        FONTS.1.get(index).cloned()
-    }
-
-    fn today(&self, _: Option<Duration>) -> Option<Datetime> {
-        None
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -160,6 +125,10 @@ mod tests {
         assert!(inline.width > 10. && inline.height > 5.);
         assert!(inline.baseline > 0. && inline.baseline < inline.height);
 
+        // Single terms too: the subscript hangs below the baseline.
+        let term = render("y_1", MathStyle::Inline, 16., "#000000ff").unwrap();
+        assert!(term.baseline < term.height * 0.8);
+
         let display = render(
             r"\sum_{i=1}^{n} \frac{1}{i^2}",
             MathStyle::Display,
@@ -169,6 +138,13 @@ mod tests {
         .unwrap();
         // Display style stacks the limits and the fraction.
         assert!(display.height > inline.height * 1.5);
+    }
+
+    #[test]
+    fn rasterizes_for_documents() {
+        let png = render_png(r"\frac{a}{b}", MathStyle::Display, 16., "#000000ff", 4.).unwrap();
+        assert!(png.png.starts_with(b"\x89PNG"));
+        assert!(png.height > png.width * 0.5);
     }
 
     #[test]

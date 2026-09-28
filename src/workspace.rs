@@ -38,7 +38,9 @@ use crate::{
     actions::*,
     analysis::{Analysis, content_hash},
     document::{self, LineEnding, display_name, is_markdown_path},
-    export, format, images, preview_ext,
+    docx, export, format, images,
+    pdf::{self, Paper},
+    preview_ext,
     settings::{Appearance, Layout, clamp_font_size},
     themes::{self, AppSettings},
 };
@@ -561,6 +563,20 @@ impl Workspace {
     }
 
     fn export_html(&mut self, _: &ExportHtml, window: &mut Window, cx: &mut Context<Self>) {
+        self.export(ExportFormat::Html, window, cx);
+    }
+
+    fn export_pdf(&mut self, _: &ExportPdf, window: &mut Window, cx: &mut Context<Self>) {
+        self.export(ExportFormat::Pdf, window, cx);
+    }
+
+    fn export_docx(&mut self, _: &ExportDocx, window: &mut Window, cx: &mut Context<Self>) {
+        self.export(ExportFormat::Docx, window, cx);
+    }
+
+    /// Ask where to save, then render and write the export in the
+    /// background.
+    fn export(&mut self, format: ExportFormat, window: &mut Window, cx: &mut Context<Self>) {
         let dir = self.default_dir();
         let title = self
             .analysis
@@ -568,14 +584,16 @@ impl Workspace {
             .first()
             .map(|heading| heading.text.clone())
             .unwrap_or_else(|| self.document_name());
+        let extension = format.extension();
         let name = match &self.path {
             Some(path) => format!(
-                "{}.html",
+                "{}.{extension}",
                 path.file_stem().unwrap_or_default().to_string_lossy()
             ),
-            None => suggested_file_name(&self.analysis, "html"),
+            None => suggested_file_name(&self.analysis, extension),
         };
         let source = self.source.clone();
+        let base_dir = self.document_dir();
         let chosen = cx.prompt_for_new_path(&dir, Some(&name));
         cx.spawn_in(window, async move |_, cx| {
             let Ok(Ok(Some(path))) = chosen.await else {
@@ -585,8 +603,14 @@ impl Workspace {
             let result = cx
                 .background_executor()
                 .spawn(async move {
-                    let html = export::to_html(&source, &title);
-                    std::fs::write(&target, html)
+                    let paper = Paper::from_locale();
+                    let base_dir = base_dir.as_deref();
+                    let bytes = match format {
+                        ExportFormat::Html => Ok(export::to_html(&source, &title).into_bytes()),
+                        ExportFormat::Pdf => pdf::to_pdf(&source, &title, base_dir, paper),
+                        ExportFormat::Docx => docx::to_docx(&source, &title, base_dir, paper),
+                    }?;
+                    std::fs::write(&target, bytes).map_err(|err| err.to_string())
                 })
                 .await;
             _ = cx.update(|window, cx| {
@@ -1314,6 +1338,23 @@ fn heading_icon(level: u8) -> Icon {
     })
 }
 
+#[derive(Clone, Copy)]
+enum ExportFormat {
+    Html,
+    Pdf,
+    Docx,
+}
+
+impl ExportFormat {
+    fn extension(self) -> &'static str {
+        match self {
+            ExportFormat::Html => "html",
+            ExportFormat::Pdf => "pdf",
+            ExportFormat::Docx => "docx",
+        }
+    }
+}
+
 /// A file name from the first heading, for documents never saved.
 fn suggested_file_name(analysis: &Analysis, extension: &str) -> String {
     let stem: String = analysis
@@ -1397,6 +1438,8 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::save))
             .on_action(cx.listener(Self::save_as))
             .on_action(cx.listener(Self::export_html))
+            .on_action(cx.listener(Self::export_pdf))
+            .on_action(cx.listener(Self::export_docx))
             .on_action(cx.listener(Self::reveal_in_folder))
             .on_action(cx.listener(Self::close_window))
             .on_action(cx.listener(Self::quit))

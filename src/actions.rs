@@ -16,6 +16,8 @@ actions!(
         Save,
         SaveAs,
         ExportHtml,
+        ExportPdf,
+        ExportDocx,
         RevealInFolder,
         CloseWindow,
         Quit,
