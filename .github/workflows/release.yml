@@ -1,0 +1,314 @@
+# Builds installable Malgel packages for macOS, Windows and Linux.
+#
+# Pushing a tag vX.Y.Z (matching the version in Cargo.toml) publishes a
+# GitHub Release with every package; running the workflow by hand only
+# uploads them as workflow artifacts. Code signing and notarization happen
+# when the repository secrets described in docs/RELEASING.md are set;
+# without them the macOS app is signed ad hoc and the Windows files are
+# unsigned.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read the version from Cargo.toml
+        id: version
+        run: |
+          version="$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')"
+          if [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match version $version in Cargo.toml"
+            exit 1
+          fi
+          echo "Version $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  macos:
+    needs: version
+    runs-on: macos-14
+    timeout-minutes: 180
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+      DMG: Malgel-${{ needs.version.outputs.version }}-macos-universal.dmg
+      HAS_SIGNING: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}
+      HAS_NOTARY: ${{ (secrets.APPLE_API_KEY != '' && secrets.APPLE_API_KEY_ID != '' && secrets.APPLE_API_ISSUER != '') || (secrets.APPLE_ID != '' && secrets.APPLE_TEAM_ID != '' && secrets.APPLE_APP_SPECIFIC_PASSWORD != '') }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+
+      - name: Build a universal binary
+        run: |
+          cargo build --release --locked --target aarch64-apple-darwin
+          cargo build --release --locked --target x86_64-apple-darwin
+          mkdir -p dist
+          lipo -create -output dist/malgel \
+            target/aarch64-apple-darwin/release/malgel \
+            target/x86_64-apple-darwin/release/malgel
+          lipo -info dist/malgel
+
+      - name: Assemble Malgel.app
+        run: packaging/macos/bundle.sh dist/malgel "$VERSION" dist
+
+      - name: Import the signing certificate
+        if: env.HAS_SIGNING == 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/malgel-signing.keychain-db"
+          keychain_password="$(openssl rand -base64 32)"
+          echo "::add-mask::$keychain_password"
+          certificate="$RUNNER_TEMP/certificate.p12"
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$certificate"
+          echo "KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$certificate" -k "$keychain" -f pkcs12 \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm -f "$certificate"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$keychain_password" "$keychain" > /dev/null
+          # Search the new keychain first, keeping the existing ones.
+          security list-keychains -d user | xargs security list-keychains -d user -s "$keychain"
+
+      - name: Sign Malgel.app
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          if [[ "$HAS_SIGNING" == true ]]; then
+            codesign --force --options runtime --timestamp \
+              --keychain "$KEYCHAIN" --sign "$APPLE_SIGNING_IDENTITY" dist/Malgel.app
+          else
+            echo "::warning::No signing certificate configured; signing Malgel.app ad hoc"
+            codesign --force --sign - dist/Malgel.app
+          fi
+          codesign --verify --strict --verbose=2 dist/Malgel.app
+
+      - name: Notarize Malgel.app
+        if: env.HAS_SIGNING == 'true' && env.HAS_NOTARY == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: packaging/macos/notarize.sh dist/Malgel.app
+
+      - name: Create the disk image
+        run: |
+          staging="$RUNNER_TEMP/dmg"
+          mkdir -p "$staging"
+          ditto dist/Malgel.app "$staging/Malgel.app"
+          ln -s /Applications "$staging/Applications"
+          # hdiutil occasionally fails with "Resource busy" on hosted runners.
+          for attempt in 1 2 3; do
+            if hdiutil create -volname Malgel -srcfolder "$staging" -fs HFS+ \
+              -format UDZO -ov "dist/$DMG"; then
+              break
+            fi
+            if [[ $attempt == 3 ]]; then exit 1; fi
+            sleep 10
+          done
+
+      - name: Sign the disk image
+        if: env.HAS_SIGNING == 'true'
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          codesign --force --timestamp --keychain "$KEYCHAIN" \
+            --sign "$APPLE_SIGNING_IDENTITY" "dist/$DMG"
+          codesign --verify --verbose=2 "dist/$DMG"
+
+      - name: Notarize the disk image
+        if: env.HAS_SIGNING == 'true' && env.HAS_NOTARY == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: packaging/macos/notarize.sh "dist/$DMG"
+
+      - name: Remove the signing keychain
+        if: always() && env.KEYCHAIN != ''
+        run: security delete-keychain "$KEYCHAIN" || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: malgel-macos
+          path: dist/${{ env.DMG }}
+          if-no-files-found: error
+
+  windows:
+    needs: version
+    runs-on: windows-latest
+    timeout-minutes: 120
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      HAS_SIGNING: ${{ secrets.WINDOWS_CERTIFICATE != '' && secrets.WINDOWS_CERTIFICATE_PASSWORD != '' }}
+      # aws-lc-sys (TLS for remote images) needs NASM on x86_64 Windows
+      # unless it may use its prebuilt objects.
+      AWS_LC_SYS_PREBUILT_NASM: "1"
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Build
+        run: cargo build --release --locked --target x86_64-pc-windows-msvc
+
+      - name: Stage Malgel.exe
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target/x86_64-pc-windows-msvc/release/malgel.exe dist/Malgel.exe
+
+      - name: Import the signing certificate
+        if: env.HAS_SIGNING == 'true'
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+        run: |
+          $certificate = Join-Path $env:RUNNER_TEMP certificate.pfx
+          [IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
+          "CERTIFICATE=$certificate" >> $env:GITHUB_ENV
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
+            Where-Object { $_.FullName -like '*\x64\*' } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $signtool) { throw "signtool.exe not found" }
+          "SIGNTOOL=$($signtool.FullName)" >> $env:GITHUB_ENV
+
+      - name: Sign Malgel.exe
+        if: env.HAS_SIGNING == 'true'
+        env:
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: ./packaging/windows/sign.ps1 dist/Malgel.exe
+
+      - name: Create the zip
+        run: |
+          $name = "Malgel-$env:VERSION-windows-x64"
+          $staging = Join-Path $env:RUNNER_TEMP $name
+          New-Item -ItemType Directory -Force $staging | Out-Null
+          Copy-Item dist/Malgel.exe $staging
+          foreach ($doc in 'README.md', 'LICENSE', 'LICENSE-MIT', 'LICENSE-APACHE') {
+            if (Test-Path $doc) { Copy-Item $doc $staging }
+          }
+          Compress-Archive -Path $staging -DestinationPath "dist/$name.zip"
+
+      - name: Build the installer
+        run: |
+          $iscc = (Get-Command iscc.exe -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --yes --no-progress
+            $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          }
+          $dist = (Resolve-Path dist).Path
+          & $iscc "/DAppVersion=$env:VERSION" "/DSourceExe=$dist\Malgel.exe" "/DOutputDir=$dist" packaging/windows/malgel.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
+
+      - name: Sign the installer
+        if: env.HAS_SIGNING == 'true'
+        env:
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: ./packaging/windows/sign.ps1 "dist/Malgel-$env:VERSION-windows-x64-setup.exe"
+
+      - name: Remove the signing certificate
+        if: always() && env.CERTIFICATE != ''
+        run: Remove-Item -Force -ErrorAction SilentlyContinue $env:CERTIFICATE
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: malgel-windows
+          path: |
+            dist/*.zip
+            dist/*-setup.exe
+          if-no-files-found: error
+
+  linux:
+    needs: version
+    # The oldest supported runner, so the binary runs on older glibc versions.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfontconfig-dev libwayland-dev libxkbcommon-x11-dev libx11-xcb-dev libssl-dev libzstd-dev libvulkan1
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Download linuxdeploy
+        run: |
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/linuxdeploy" \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x "$RUNNER_TEMP/linuxdeploy"
+
+      - name: Package
+        env:
+          # Runners have no FUSE; AppImages extract themselves instead.
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: LINUXDEPLOY="$RUNNER_TEMP/linuxdeploy" packaging/linux/package.sh target/release/malgel "$VERSION" dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: malgel-linux
+          path: |
+            dist/*.tar.gz
+            dist/*.AppImage
+          if-no-files-found: error
+
+  release:
+    if: github.event_name == 'push'
+    needs: [version, macos, windows, linux]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: malgel-*
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum -- * | tee SHA256SUMS.txt
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: Malgel ${{ needs.version.outputs.version }}
+          files: dist/*
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          fail_on_unmatched_files: true

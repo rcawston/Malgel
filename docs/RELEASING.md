@@ -1,0 +1,162 @@
+# Releasing Malgel
+
+Releases are built by [`.github/workflows/release.yml`](../.github/workflows/release.yml).
+It runs when a `v*` tag is pushed, and can be started by hand from the
+Actions tab (Release → Run workflow) to try the packaging without
+publishing anything.
+
+| Platform | Files | Built on |
+| --- | --- | --- |
+| macOS 11+ | `Malgel-<version>-macos-universal.dmg`: `Malgel.app` for Apple silicon and Intel, with an Applications shortcut | `macos-14` |
+| Windows 10+ | `Malgel-<version>-windows-x64-setup.exe` (installer) and `Malgel-<version>-windows-x64.zip` (portable `Malgel.exe`) | `windows-latest` |
+| Linux x86_64 | `Malgel-<version>-x86_64.AppImage` and `malgel-<version>-linux-x86_64.tar.gz` | `ubuntu-22.04` |
+
+A tag push publishes a GitHub Release with all of these, a
+`SHA256SUMS.txt` and notes generated from the merged pull requests. A
+manual run only attaches them to the workflow run as artifacts
+(`malgel-macos`, `malgel-windows`, `malgel-linux`).
+
+## Cutting a release
+
+1. Bump `version` in `Cargo.toml` and run `cargo build` so `Cargo.lock`
+   picks it up.
+2. Add a `<release version="X.Y.Z" date="YYYY-MM-DD"/>` line at the top of
+   `<releases>` in `packaging/linux/dev.malgel.Malgel.metainfo.xml`.
+3. Commit, tag and push:
+
+   ```sh
+   git commit -am "Release X.Y.Z"
+   git tag -a vX.Y.Z -m "Malgel X.Y.Z"
+   git push origin main vX.Y.Z
+   ```
+
+The tag must be `v` followed by the version in `Cargo.toml`; the workflow
+stops otherwise. A version with a pre-release part (`v0.3.0-beta.1`) is
+published as a pre-release.
+
+The version shown in the app, the macOS `Info.plist`, the Windows file
+properties and the installer all come from `Cargo.toml`.
+
+## Code signing
+
+Signing is optional. Each platform signs when its secrets are present and
+falls back otherwise, so a fork or a fresh repository still produces
+working packages. Add secrets under **Settings → Secrets and variables →
+Actions → New repository secret**, or with the GitHub CLI
+(`gh secret set NAME < file`). The workflow never prints them.
+
+| Secret | Used for |
+| --- | --- |
+| `APPLE_CERTIFICATE` | Developer ID Application certificate and private key: a `.p12` file, base64-encoded |
+| `APPLE_CERTIFICATE_PASSWORD` | Password of that `.p12` |
+| `APPLE_SIGNING_IDENTITY` | Certificate name, e.g. `Developer ID Application: Jane Doe (AB12CD34EF)` |
+| `APPLE_API_KEY` | Notarization with an App Store Connect API key: the `.p8` file, base64-encoded |
+| `APPLE_API_KEY_ID` | That key's ID |
+| `APPLE_API_ISSUER` | Issuer ID shown above the key list |
+| `APPLE_ID` | Notarization with an Apple ID instead: its email address |
+| `APPLE_TEAM_ID` | 10-character Team ID |
+| `APPLE_APP_SPECIFIC_PASSWORD` | App-specific password for that Apple ID |
+| `WINDOWS_CERTIFICATE` | Authenticode code-signing certificate and private key: a `.pfx` file, base64-encoded |
+| `WINDOWS_CERTIFICATE_PASSWORD` | Password of that `.pfx` |
+
+### macOS
+
+Signing needs the first three secrets; notarization additionally needs
+either the three API key secrets or the three Apple ID secrets (the API
+key is used when both are set). Everything requires a paid Apple Developer
+Program membership.
+
+**Developer ID certificate.** In Xcode, open Settings → Accounts, select
+the team, choose Manage Certificates, and add a *Developer ID Application*
+certificate (or create one at developer.apple.com → Certificates with a
+certificate signing request from Keychain Access). Then, in Keychain
+Access → login → My Certificates, right-click
+*Developer ID Application: …* (it must have its private key underneath),
+choose Export, save as `.p12` and pick a password.
+
+```sh
+base64 -i DeveloperID.p12 | pbcopy          # paste as APPLE_CERTIFICATE
+security find-identity -v -p codesigning    # the name for APPLE_SIGNING_IDENTITY
+```
+
+**App Store Connect API key (recommended for notarization).** In App Store
+Connect → Users and Access → Integrations → App Store Connect API, create a
+Team Key with the Developer role and download `AuthKey_<ID>.p8` (it can be
+downloaded only once). Store `base64 -i AuthKey_<ID>.p8` as
+`APPLE_API_KEY`, the key ID as `APPLE_API_KEY_ID` and the Issuer ID as
+`APPLE_API_ISSUER`.
+
+**Or an Apple ID.** Create an app-specific password at account.apple.com →
+Sign-In and Security → App-Specific Passwords. The Team ID is listed under
+Membership details at developer.apple.com.
+
+With a certificate, the workflow imports it into a temporary keychain,
+signs `Malgel.app` with the hardened runtime and a secure timestamp
+(Malgel needs no entitlements), then signs the disk image. With
+notarization credentials it submits the app and the disk image to Apple's
+notary service, waits for the result (printing Apple's log if it is
+rejected) and staples the tickets, so Gatekeeper accepts Malgel even
+offline. The keychain is deleted at the end of the job, whatever the
+outcome.
+
+### Windows
+
+The certificate must be exportable as a `.pfx` with its private key.
+Certificates issued since mid-2023 by public CAs usually live on a hardware
+token or in a cloud HSM instead and cannot be exported; those need a
+signing service (Azure Trusted Signing, DigiCert KeyLocker, SSL.com
+eSigner…), which this workflow does not set up.
+
+```sh
+base64 -w0 malgel.pfx                       # Linux; on macOS: base64 -i malgel.pfx
+```
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("malgel.pfx")) | Set-Clipboard
+```
+
+With the certificate, `Malgel.exe` (before it goes into the zip and the
+installer) and the installer are signed with SHA-256 and timestamped by
+DigiCert's RFC 3161 server, then verified. A self-signed test certificate
+fails that verification; use one that chains to a trusted root.
+
+### Without secrets
+
+- **macOS:** the app is signed ad hoc, so it runs on Apple silicon but
+  Gatekeeper blocks it after download. Open it once by right-clicking
+  `Malgel.app` → Open; on macOS 15 and later, try to open it, then choose
+  System Settings → Privacy & Security → Open Anyway. Alternatively:
+  `xattr -dr com.apple.quarantine /Applications/Malgel.app`.
+- **Windows:** the files are unsigned. SmartScreen may show "Windows
+  protected your PC"; choose More info → Run anyway.
+- **Linux:** packages are never signed; nothing changes.
+
+## What gets built
+
+- **Icons.** `packaging/icon/malgel.svg` is the source artwork and
+  `malgel-small.svg` a simplified version for 16–32 px. After editing either,
+  run `packaging/icon/render.sh` (needs `rsvg-convert` and ImageMagick) and
+  commit the regenerated PNGs, `packaging/macos/Malgel.iconset`,
+  `packaging/windows/malgel.ico` and `packaging/linux/icons`.
+- **macOS.** Release builds for `aarch64-apple-darwin` and
+  `x86_64-apple-darwin` (with `MACOSX_DEPLOYMENT_TARGET=11.0`) are merged
+  with `lipo`. `packaging/macos/bundle.sh` assembles `Malgel.app` from
+  `packaging/macos/Info.plist`, which declares Malgel an editor for Markdown
+  (`net.daringfireball.markdown`: `.md`, `.markdown`, `.mdown`, `.mkd`,
+  `.mkdn`) and plain text, and converts the iconset with `iconutil`.
+  `packaging/macos/notarize.sh` handles notarization.
+- **Windows.** `build.rs` embeds the icon and version information in
+  `malgel.exe` when the target is Windows (it does nothing elsewhere). The
+  Inno Setup script `packaging/windows/malgel.iss` installs per user by
+  default (all users on request), adds a Start menu entry, registers
+  Malgel under "Open with" for `.md`, `.markdown`, `.mdown`, `.mkd` and
+  `.txt`, and lists it in Default Apps without changing any existing
+  default. `packaging/windows/sign.ps1` does the signing.
+- **Linux.** `packaging/linux/package.sh` installs the binary, desktop
+  entry, AppStream metadata and icons into a prefix and archives it; the
+  tarball can be unpacked straight into `~/.local`. With `LINUXDEPLOY`
+  set it also builds the AppImage, bundling the libraries that are not part
+  of a base system. Building on Ubuntu 22.04 keeps the glibc requirement
+  at 2.35.
+
+Each script can be run locally on its platform; see the comment at its top.

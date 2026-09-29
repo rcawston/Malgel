@@ -79,6 +79,22 @@ A fast, native Markdown editor and previewer written in pure Rust with
 On a software-rendered Linux VM the window appears in about 150 ms, and
 typing into a 1.5 MB document keeps pace with the keyboard.
 
+## Install
+
+Download Malgel from the
+[releases page](https://github.com/rcawston/Malgel/releases):
+
+- **macOS 11+** (Apple silicon and Intel): open the `.dmg` and drag Malgel
+  to Applications.
+- **Windows 10+:** run the `-setup.exe` installer, which also adds Malgel to
+  "Open with" for Markdown files, or unzip the portable `Malgel.exe`.
+- **Linux x86_64:** make the `.AppImage` executable and run it, or unpack the
+  tarball into `~/.local`:
+  `tar -xzf malgel-*-linux-x86_64.tar.gz -C ~/.local --strip-components=1`.
+
+Builds made without signing certificates are unsigned (ad-hoc signed on
+macOS); [docs/RELEASING.md](docs/RELEASING.md) explains how to open them.
+
 ## Building
 
 Malgel needs a recent stable Rust toolchain (developed with Rust 1.98; 1.94
@@ -98,11 +114,12 @@ cargo run --release                 # opens the welcome document
 cargo run --release -- notes.md     # opens a file
 ```
 
-GPUI Kit supports macOS, Linux (Wayland and X11) and Windows. Malgel has been
-built and exercised on Linux.
+GPUI Kit supports macOS, Linux (Wayland and X11) and Windows. CI builds and
+tests Malgel on all three; it has been exercised mostly on Linux.
 
-`packaging/linux/dev.malgel.Malgel.desktop` is a desktop entry for installing
-the binary as `malgel` on Linux.
+`packaging/` holds the app icon and the macOS, Windows and Linux packaging.
+Pushing a `v*` tag builds the installable packages and publishes a release;
+see [docs/RELEASING.md](docs/RELEASING.md), which also covers code signing.
 
 ## Keyboard shortcuts
 
@@ -152,6 +169,7 @@ Set `MALGEL_CONFIG_DIR` to use another folder.
 | `src/math.rs` | LaTeX → Typst → SVG/PNG formula rendering |
 | `src/menus.rs`, `src/actions.rs` | Menus, actions and key bindings |
 | `src/settings.rs`, `src/themes.rs` | Preferences and theme application |
+| `build.rs`, `packaging/` | Windows exe icon and version info; app icon, bundles and installers |
 
 Run the tests with `cargo test`.
 
