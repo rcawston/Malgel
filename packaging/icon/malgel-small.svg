@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Malgel app icon, simplified for 16–32 px: the tile nearly fills the canvas
+  and carries only the Markdown mark, so it stays crisp at tiny sizes.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7C6CF7"/>
+      <stop offset="1" stop-color="#4A3CD6"/>
+    </linearGradient>
+  </defs>
+  <rect x="32" y="32" width="960" height="960" rx="208" fill="url(#tile)"/>
+  <path fill="#FFFFFF" d="M112 704V320H240L304 420L368 320H496V704H368V530L304 630L240 530V704ZM672 320H800V500H912L736 704L560 500H672Z"/>
+</svg>
