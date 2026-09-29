@@ -47,6 +47,18 @@ reqwest_client = { package = "gpui-pre-reqwest-client", version = "=0.3.7" }
 # Same Markdown parser the preview uses; drives HTML export and scroll-sync block indexing.
 markdown = "1.0.0"
 serde = { version = "1", features = ["derive"] }
+# Display width of table cells, so wide characters line up.
+unicode-width = "0.2"
+# Spell checking with Hunspell dictionaries, in pure Rust.
+spellbook = "0.4"
+# Word boundaries for spell checking.
+unicode-segmentation = "1"
+# "Copy as rich text": GPUI's clipboard only carries plain text and images.
+arboard = { version = "3.6", default-features = false, features = ["wayland-data-control"] }
+base64 = "0.22"
+# Files the system asks Malgel to open arrive on another thread.
+futures = "0.3"
+url = "2"
 # System fonts give exported PDFs coverage the bundled fonts lack (CJK, emoji).
 fontdb = "0.23"
 # Picks A4 or US Letter for exports from the system locale.

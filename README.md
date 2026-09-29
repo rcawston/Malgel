@@ -30,10 +30,28 @@ A fast, native Markdown editor and previewer written in pure Rust with
 - **Formatting commands.** Bold, italic, strikethrough, inline code, links,
   headings, quotes, bulleted/numbered/task lists and code blocks — each
   toggles, and works on the selection or the word under the caret.
+- **Structure that follows the keyboard.** Enter continues a list item, task
+  or quote, and ends the list on an empty item; Tab and Shift+Tab nest and
+  un-nest items with their children; numbered lists renumber themselves.
+  In tables, Tab and Shift+Tab move between cells and keep the columns
+  aligned, Enter adds a row, and Format → Tidy table aligns one on demand.
+- **Smart paste.** Paste or drop an image and Malgel saves it in an `assets`
+  folder next to the document and links it; paste a URL over selected text
+  to link the text.
+- **Copy as rich text** (Ctrl+Alt+C). The selection, or the whole document,
+  goes on the clipboard as formatted HTML (inline styles, formulas and local
+  images embedded) for mail, word processors and web editors, with the
+  Markdown as the plain-text alternative.
 - **Go to heading.** An outline palette (Ctrl+Shift+O) jumps to any heading.
 - **Documents done right.** Atomic saves, UTF-8 with byte-order-mark
   handling, CRLF files stay CRLF, unsaved-changes prompts on new, open,
   close and quit, recent files, drag and drop to open.
+- **Nothing lost.** Unsaved changes are written aside a second after you
+  stop typing and come back after a crash. Files changed by another program
+  reload by themselves, or, when you have unsaved edits, Malgel asks which
+  version to keep; a file moved or deleted underneath you stays open as
+  unsaved. The last session — documents, caret positions, folder and window
+  — reopens on launch.
 - **Export as HTML, PDF and Word.** All three render alerts and math as the
   preview does, embed local images, and work offline.
   - *HTML*: a standalone, self-styled page that follows the reader's
@@ -54,6 +72,27 @@ A fast, native Markdown editor and previewer written in pure Rust with
 - **Live statistics.** Words (CJK-aware), characters, reading time, caret
   position and selection size in the status bar.
 
+### Optional features
+
+Out of the box Malgel is a focused single-document editor. Everything below
+is off until turned on in **Settings** (Ctrl+, — the Edit menu on Linux and
+Windows, the Malgel menu on macOS) or the View menu:
+
+- **Tabs.** Open documents side by side; Ctrl+Tab and Ctrl+Shift+Tab switch
+  between them. Without tabs, opening a file replaces the current one.
+- **File sidebar** (Ctrl+Shift+B). A folder's Markdown and text files as a
+  tree that follows changes on disk; File → Open folder… picks the folder.
+- **Outline** (Ctrl+Alt+O). The document's headings beside the editor, with
+  the section you are in highlighted; click one to jump there.
+- **Spell check.** Unknown words are underlined in prose (code, math, URLs
+  and front matter are skipped); right-click one for suggestions or to add
+  it to your dictionary. American English is built in; any installed
+  Hunspell dictionary works too (see [Settings](#settings)).
+- **Focus mode** (Ctrl+Shift+F, Esc to leave). Only the text, larger and
+  centered, with everything but the current paragraph faded.
+
+![Tabs, file sidebar, outline and spell check on the dark theme](docs/screenshot-workspace.png)
+
 | Tokyo Night | Outline palette on Catppuccin Mocha |
 | --- | --- |
 | ![Dark appearance](docs/screenshot-dark.png) | ![Go to heading](docs/screenshot-outline.png) |
@@ -73,8 +112,11 @@ A fast, native Markdown editor and previewer written in pure Rust with
   frame, once the target line is laid out.
 - Statistics, the heading outline and the scroll-sync index are computed in
   one debounced background pass; results from stale revisions are dropped.
-- Nothing polls: the UI redraws only when state changes, so an idle window
-  uses no CPU.
+- The UI redraws only when state changes. The one periodic job is checking
+  open files for outside changes every two seconds — a metadata read per
+  file, with contents read only when the file changed.
+- Spell checking runs on a background thread after typing pauses, and only
+  on prose.
 
 On a software-rendered Linux VM the window appears in about 150 ms, and
 typing into a 1.5 MB document keeps pace with the keyboard.
@@ -129,7 +171,11 @@ Ctrl is ⌘ on macOS.
 | --- | --- |
 | New, Open…, Save, Save as… | Ctrl+N, Ctrl+O, Ctrl+S, Ctrl+Shift+S |
 | Export as HTML… | Ctrl+Shift+E |
-| Close window, Quit | Ctrl+W, Ctrl+Q |
+| Copy as rich text | Ctrl+Alt+C |
+| Close (tab, or window without tabs), Close window, Quit | Ctrl+W, Ctrl+Shift+W, Ctrl+Q |
+| Next / previous tab | Ctrl+Tab / Ctrl+Shift+Tab |
+| File sidebar, Outline, Focus mode | Ctrl+Shift+B, Ctrl+Alt+O, Ctrl+Shift+F |
+| Settings | Ctrl+, |
 | Editor / Editor and preview / Preview | Ctrl+1 / Ctrl+2 / Ctrl+3 |
 | Go to heading… | Ctrl+Shift+O |
 | Find…, Replace… | Ctrl+F, Ctrl+H |
@@ -140,27 +186,45 @@ Ctrl is ⌘ on macOS.
 | Zoom in / out / actual size | Ctrl+=, Ctrl+-, Ctrl+0 |
 | Switch light and dark | Ctrl+Shift+L |
 
+In lists and tables, Enter, Tab and Shift+Tab continue, nest and move
+between cells as described above; Shift+Enter always inserts a plain line
+break.
+
 ## Settings
 
-Preferences (appearance, themes, zoom, layout, wrapping, line numbers, scroll
-sync and recent files) are saved automatically to `settings.json` in:
+Preferences (appearance, themes, zoom, layout, the optional features,
+wrapping, line numbers, scroll sync and recent files) are saved
+automatically to `settings.json` in Malgel's folder:
 
 - Linux: `$XDG_CONFIG_HOME/malgel` (usually `~/.config/malgel`)
 - macOS: `~/Library/Application Support/Malgel`
 - Windows: `%APPDATA%\Malgel`
 
-Set `MALGEL_CONFIG_DIR` to use another folder.
+Set `MALGEL_CONFIG_DIR` to use another folder. The same folder holds
+`session.json` (the last session), `recovery/` (unsaved changes, removed
+once saved or discarded), and `dictionary.txt` (words you added). Put
+Hunspell dictionaries (`xx_YY.aff` and `xx_YY.dic`) in its `dictionaries/`
+folder to check other languages; on Linux the system's Hunspell
+dictionaries and on macOS those in `~/Library/Spelling` are found too.
+`image_folder` in `settings.json` changes where pasted images go
+(default `assets`).
 
 ## Project layout
 
 | Path | Purpose |
 | --- | --- |
 | `src/main.rs` | Startup: GPUI Kit, HTTP client for images, themes, key bindings, menus, window |
-| `src/workspace.rs` | The window: title bar, editor, preview, status bar, file commands, scroll sync |
+| `src/workspace.rs` | The window: title bar, tabs, sidebars, status bar, settings, file commands, watching files, the session |
+| `src/document_view.rs` | One document: editor and preview, scroll sync, smart keys and paste, spelling, focus mode, recovery |
+| `src/smart_edit.rs` | List continuation and nesting, table navigation and tidying, paste as link — pure and tested |
+| `src/file_tree.rs` | The file sidebar |
+| `src/spell.rs` | Spell checking of prose with Hunspell dictionaries |
+| `src/session.rs` | The last session and recovered unsaved changes |
+| `src/rich_copy.rs` | Copy as rich text |
 | `src/analysis.rs` | Background statistics, outline and block index |
 | `src/format.rs` | Formatting commands as pure, tested text transforms |
 | `src/document.rs` | Loading and atomically saving files, line endings |
-| `src/export.rs` | HTML export |
+| `src/export.rs` | HTML export, and HTML for the clipboard |
 | `src/pdf.rs` | PDF export: Markdown → Typst markup → PDF |
 | `src/docx.rs` | Word export |
 | `src/typst_world.rs` | The sandboxed Typst environment shared by math and PDF export |
@@ -178,3 +242,7 @@ Run the tests with `cargo test`.
 Built on [GPUI](https://www.gpui.rs) from Zed Industries and
 [GPUI Kit](https://github.com/longbridge/gpui-kit) by Longbridge. The bundled
 themes in `themes/` come from GPUI Kit and are licensed under Apache-2.0.
+The bundled American English dictionary in `dictionaries/` is from
+[SCOWL](http://wordlist.aspell.net/) via
+[wooorm/dictionaries](https://github.com/wooorm/dictionaries); its license
+is in `dictionaries/en_US-LICENSE.txt`.

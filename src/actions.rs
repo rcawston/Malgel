@@ -13,13 +13,17 @@ actions!(
     [
         NewFile,
         Open,
+        OpenFolder,
         Save,
         SaveAs,
         ExportHtml,
         ExportPdf,
         ExportDocx,
         RevealInFolder,
+        CloseDocument,
         CloseWindow,
+        NextTab,
+        PreviousTab,
         Quit,
         About,
         OpenMarkdownGuide,
@@ -27,6 +31,15 @@ actions!(
         ToggleSoftWrap,
         ToggleLineNumbers,
         ToggleAppearance,
+        ToggleTabs,
+        ToggleFileSidebar,
+        ToggleOutline,
+        ToggleSpellCheck,
+        ToggleFocusMode,
+        ToggleRestoreSession,
+        OpenSettings,
+        CopyRichText,
+        TidyTable,
         ZoomIn,
         ZoomOut,
         ZoomReset,
@@ -69,6 +82,31 @@ pub struct SetTheme(pub SharedString);
 #[action(namespace = malgel, no_json)]
 pub struct OpenRecent(pub usize);
 
+/// Show the open document at this index.
+#[derive(Action, Clone, PartialEq, Deserialize)]
+#[action(namespace = malgel, no_json)]
+pub struct ActivateTab(pub usize);
+
+/// Check spelling against the named dictionary, like `en_US`.
+#[derive(Action, Clone, PartialEq, Deserialize)]
+#[action(namespace = malgel, no_json)]
+pub struct SetSpellLanguage(pub SharedString);
+
+/// Replace the misspelled `word` at `start..end` with `with`.
+#[derive(Action, Clone, PartialEq, Deserialize)]
+#[action(namespace = malgel, no_json)]
+pub struct ReplaceMisspelling {
+    pub start: usize,
+    pub end: usize,
+    pub word: SharedString,
+    pub with: SharedString,
+}
+
+/// Accept a word as correctly spelled from now on.
+#[derive(Action, Clone, PartialEq, Deserialize)]
+#[action(namespace = malgel, no_json)]
+pub struct AddToDictionary(pub SharedString);
+
 /// The key context of the workspace view.
 pub const WORKSPACE_CONTEXT: &str = "Workspace";
 
@@ -81,7 +119,23 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-s", Save, workspace),
         KeyBinding::new("secondary-shift-s", SaveAs, workspace),
         KeyBinding::new("secondary-shift-e", ExportHtml, workspace),
-        KeyBinding::new("secondary-w", CloseWindow, workspace),
+        KeyBinding::new("secondary-w", CloseDocument, workspace),
+        KeyBinding::new("secondary-shift-w", CloseWindow, workspace),
+        KeyBinding::new("ctrl-tab", NextTab, workspace),
+        KeyBinding::new("ctrl-shift-tab", PreviousTab, workspace),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-]", NextTab, workspace),
+        #[cfg(target_os = "macos")]
+        KeyBinding::new("cmd-shift-[", PreviousTab, workspace),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-pagedown", NextTab, workspace),
+        #[cfg(not(target_os = "macos"))]
+        KeyBinding::new("ctrl-pageup", PreviousTab, workspace),
+        KeyBinding::new("secondary-shift-b", ToggleFileSidebar, workspace),
+        KeyBinding::new("secondary-alt-o", ToggleOutline, workspace),
+        KeyBinding::new("secondary-shift-f", ToggleFocusMode, workspace),
+        KeyBinding::new("secondary-alt-c", CopyRichText, workspace),
+        KeyBinding::new("secondary-,", OpenSettings, None),
         KeyBinding::new("secondary-q", Quit, None),
         KeyBinding::new("secondary-1", SetLayout(Layout::Editor), workspace),
         KeyBinding::new("secondary-2", SetLayout(Layout::Split), workspace),

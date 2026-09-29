@@ -8,8 +8,8 @@ Malgel is a fast, native Markdown editor. Write on the left and the preview on t
 
 You can use **bold**, _italic_, ~~strikethrough~~, `inline code` and [links](https://commonmark.org/help/). Select some text and press **Ctrl+B** to make it bold, or **Ctrl+K** to turn it into a link.
 
-- Lists nest with two spaces
-  - like this
+- Press Enter to continue a list
+  - and Tab to nest an item
 - [x] Task lists are supported
 - [ ] Finish the first draft
 
@@ -50,7 +50,9 @@ $$
 
 ## Everything else
 
-Drop a Markdown file onto the window to open it. Zoom with **Ctrl+=** and **Ctrl+-**, switch between light and dark with **Ctrl+Shift+L**, and pick a theme from the **View** menu.
+Drop a Markdown file onto the window to open it, or paste an image to save it next to your document. Zoom with **Ctrl+=** and **Ctrl+-**, switch between light and dark with **Ctrl+Shift+L**, and pick a theme from the **View** menu.
+
+Want more? Turn on tabs, a file sidebar, an outline or spell check in **Settings** (**Ctrl+,**), or write undisturbed in focus mode (**Ctrl+Shift+F**).
 
 ---
 

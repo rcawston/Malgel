@@ -1,12 +1,16 @@
-//! Export a document as a standalone HTML page.
+//! Export a document as a standalone HTML page, or as HTML for the
+//! clipboard.
 
-use std::ops::Range;
+use std::{ops::Range, path::Path};
+
+use base64::Engine as _;
 
 use gpui_kit::{AssetSource as _, assets::AllAssets};
 use markdown::{CompileOptions, Options, mdast::Node};
 
 use crate::{
     analysis::{content_hash, preview_parse_options},
+    images,
     math::{self, MathStyle},
     preview_ext::{
         AlertKind, DISPLAY_MATH_SCALE, INLINE_MATH_SCALE, display_math_source, is_inline_math,
@@ -107,6 +111,93 @@ fn compile(source: &str) -> String {
         .unwrap_or_else(|_| format!("<pre>{}</pre>", escape(source)))
 }
 
+/// Render `source` as HTML to paste into mail, word processors and web
+/// editors. Those ignore style sheets and often SVG, so styling is inline,
+/// formulas are PNG images, and local images are embedded as data URLs.
+pub fn to_clipboard_html(source: &str, base_dir: Option<&Path>) -> String {
+    let body = Exporter {
+        clipboard: true,
+        ..Exporter::default()
+    }
+    .fragment(source);
+    let body = inline_styles(&body);
+    embed_local_images(&body, base_dir)
+}
+
+const MONO: &str = "ui-monospace,SFMono-Regular,Menlo,Consolas,monospace";
+
+/// Give the tags the page styles with its style sheet the same look inline.
+fn inline_styles(html: &str) -> String {
+    let code = format!(
+        "font-family:{MONO};font-size:0.9em;background:#f6f8fa;padding:0.1em 0.3em;border-radius:4px"
+    );
+    let cell = "border:1px solid #d1d9e0;padding:4px 10px";
+    // Code inside `pre` keeps the block's styling, not the inline one.
+    html.replace("<pre><code", "<pre\u{0}><code\u{0}")
+        .replace(
+            "<pre\u{0}>",
+            &format!(
+                "<pre style=\"font-family:{MONO};font-size:0.9em;background:#f6f8fa;\
+                 border:1px solid #d1d9e0;border-radius:6px;padding:10px 12px;white-space:pre-wrap\">"
+            ),
+        )
+        .replace("<code\u{0}", &format!("<code style=\"font-family:{MONO}\""))
+        .replace("<code>", &format!("<code style=\"{code}\">"))
+        .replace(
+            "<blockquote>",
+            "<blockquote style=\"margin:0 0 1em;padding:0 1em;color:#59636e;border-left:4px solid #d1d9e0\">",
+        )
+        .replace("<table>", "<table style=\"border-collapse:collapse\">")
+        .replace("<th>", &format!("<th style=\"{cell};background:#f6f8fa\">"))
+        .replace("<th align=", &format!("<th style=\"{cell};background:#f6f8fa\" align="))
+        .replace("<td>", &format!("<td style=\"{cell}\">"))
+        .replace("<td align=", &format!("<td style=\"{cell}\" align="))
+}
+
+/// Swap local `<img src>` paths for data URLs so pasted images travel with
+/// the text. Remote images keep their URLs.
+fn embed_local_images(html: &str, base_dir: Option<&Path>) -> String {
+    const SRC: &str = "<img src=\"";
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html;
+    while let Some(start) = rest.find(SRC) {
+        let value_start = start + SRC.len();
+        out.push_str(&rest[..value_start]);
+        rest = &rest[value_start..];
+        let Some(end) = rest.find('"') else {
+            break;
+        };
+        let url = unescape(&rest[..end]);
+        let local = !url.starts_with("data:") && images::local_path(&url, base_dir).is_some();
+        match local.then(|| images::load(&url, base_dir)).flatten() {
+            Some(image) => out.push_str(&data_url(&image.bytes, image.extension)),
+            None => out.push_str(&rest[..end]),
+        }
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+fn data_url(bytes: &[u8], extension: &str) -> String {
+    let subtype = match extension {
+        "jpg" => "jpeg",
+        "svg" => "svg+xml",
+        other => other,
+    };
+    format!(
+        "data:image/{subtype};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    )
+}
+
+fn unescape(text: &str) -> String {
+    text.replace("&quot;", "\"")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+}
+
 /// Something the Markdown compiler cannot render, found in the source and
 /// replaced by its own HTML.
 struct Replacement {
@@ -120,6 +211,8 @@ struct Replacement {
 struct Exporter {
     /// Numbers the formulas, so their SVG ids stay unique in the page.
     formulas: usize,
+    /// Rendering for the clipboard rather than a page.
+    clipboard: bool,
 }
 
 impl Exporter {
@@ -233,6 +326,20 @@ impl Exporter {
 
     fn alert(&mut self, kind: AlertKind, body: &str) -> String {
         let name = kind.title();
+        if self.clipboard {
+            let color = match kind {
+                AlertKind::Note => "#0969da",
+                AlertKind::Tip => "#1a7f37",
+                AlertKind::Important => "#8250df",
+                AlertKind::Warning => "#9a6700",
+                AlertKind::Caution => "#d1242f",
+            };
+            return format!(
+                "<div style=\"margin:0 0 1em;padding:8px 12px;border-left:4px solid {color}\">\n\
+                 <p style=\"margin:0 0 4px;color:{color};font-weight:600\">{name}</p>\n{}</div>\n",
+                self.fragment(body)
+            );
+        }
         let icon = AllAssets
             .load(&kind.icon().path())
             .ok()
@@ -253,6 +360,9 @@ impl Exporter {
             MathStyle::Display => (DISPLAY_MATH_SCALE, "div", "math math-display"),
         };
         let size = MATH_BASE_SIZE * scale;
+        if self.clipboard {
+            return clipboard_formula(tex, style, size, element);
+        }
         match math::render(tex, style, size, &format!("{MATH_SENTINEL_COLOR}ff")) {
             Ok(rendered) => {
                 self.formulas += 1;
@@ -275,6 +385,37 @@ impl Exporter {
                 ),
             },
         }
+    }
+}
+
+/// A formula as a PNG image, sized in pixels and dropped to the baseline, as
+/// word processors and mail clients show images but not SVG or MathML.
+fn clipboard_formula(tex: &str, style: MathStyle, size: f32, element: &str) -> String {
+    match math::render_png(tex, style, size, "#1f2328ff", 3.) {
+        Ok(png) => {
+            let align = match style {
+                MathStyle::Inline => format!(
+                    ";vertical-align:-{:.1}px",
+                    (png.height - png.baseline).max(0.)
+                ),
+                MathStyle::Display => String::new(),
+            };
+            let (open, close) = match style {
+                MathStyle::Inline => (String::new(), String::new()),
+                MathStyle::Display => (
+                    format!("<{element} style=\"margin:0 0 1em;text-align:center\">"),
+                    format!("</{element}>"),
+                ),
+            };
+            format!(
+                "{open}<img src=\"{}\" alt=\"{}\" style=\"width:{:.1}px;height:{:.1}px{align}\">{close}",
+                data_url(&png.png, "png"),
+                escape(tex.trim()),
+                png.width,
+                png.height
+            )
+        }
+        Err(_) => format!("<code>{}</code>", escape(tex.trim())),
     }
 }
 
@@ -403,6 +544,30 @@ mod tests {
         assert!(html.contains("<code>$x$</code>"));
         assert!(html.contains("[!NOTE]"));
         assert!(!html.contains("class=\"math"));
+    }
+
+    #[test]
+    fn styles_clipboard_html_inline() {
+        let dir = std::env::temp_dir().join(format!("malgel-clip-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let png = base64::engine::general_purpose::STANDARD
+            .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
+            .unwrap();
+        std::fs::write(dir.join("dot.png"), png).unwrap();
+        let html = to_clipboard_html(
+            "> [!TIP]\n> Use `x`.\n\n| a |\n|---|\n| 1 |\n\n```\ncode\n```\n\n$y^2$ ![dot](dot.png) ![r](https://x.dev/r.png)\n",
+            Some(&dir),
+        );
+        assert!(html.contains("border-left:4px solid #1a7f37"));
+        assert!(!html.contains("<svg"));
+        assert!(!html.contains("class="));
+        assert!(html.contains("<td style="));
+        assert!(html.contains("<pre style="));
+        assert!(html.contains("alt=\"y^2\""));
+        assert!(html.contains("src=\"data:image/png;base64,"));
+        assert!(html.contains("src=\"https://x.dev/r.png\""));
+        assert!(!html.contains('\u{0}'));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

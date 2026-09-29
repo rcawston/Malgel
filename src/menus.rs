@@ -17,6 +17,7 @@ use crate::{
     actions::*,
     document::display_name,
     settings::{Appearance, Layout},
+    spell,
     themes::{AppSettings, theme_names},
 };
 
@@ -87,6 +88,7 @@ pub fn build(cx: &App) -> Vec<Menu> {
     let mut file = vec![
         MenuItem::action("New", NewFile),
         MenuItem::action("Open…", Open),
+        MenuItem::action("Open folder…", OpenFolder),
         submenu("Open recent", recent),
         MenuItem::separator(),
         MenuItem::action("Save", Save),
@@ -105,24 +107,30 @@ pub fn build(cx: &App) -> Vec<Menu> {
             RevealInFolder,
         ),
         MenuItem::separator(),
+        MenuItem::action("Close", CloseDocument),
         MenuItem::action("Close window", CloseWindow),
     ];
     if !macos {
         file.push(MenuItem::action("Quit", Quit));
     }
 
-    let edit = vec![
+    let mut edit = vec![
         MenuItem::action("Undo", Undo),
         MenuItem::action("Redo", Redo),
         MenuItem::separator(),
         MenuItem::action("Cut", Cut),
         MenuItem::action("Copy", Copy),
+        MenuItem::action("Copy as rich text", CopyRichText),
         MenuItem::action("Paste", Paste),
         MenuItem::action("Select all", SelectAll),
         MenuItem::separator(),
         MenuItem::action("Find…", Search),
         MenuItem::action("Replace…", Replace),
     ];
+    if !macos {
+        edit.push(MenuItem::separator());
+        edit.push(MenuItem::action("Settings…", OpenSettings));
+    }
 
     let format = vec![
         MenuItem::action("Bold", Bold),
@@ -142,7 +150,26 @@ pub fn build(cx: &App) -> Vec<Menu> {
         MenuItem::action("Numbered list", NumberedList),
         MenuItem::action("Task list", TaskList),
         MenuItem::action("Code block", CodeBlock),
+        MenuItem::separator(),
+        MenuItem::action("Tidy table", TidyTable),
     ];
+
+    let current_language = settings
+        .spell_language
+        .clone()
+        .unwrap_or_else(spell::default_language);
+    let mut spelling = vec![
+        MenuItem::action("Check spelling", ToggleSpellCheck).checked(settings.spell_check),
+        MenuItem::separator(),
+    ];
+    spelling.extend(spell::available_languages().into_iter().map(|language| {
+        let checked = settings.spell_check && language == current_language;
+        MenuItem::action(
+            language.replace('_', "-"),
+            SetSpellLanguage(language.into()),
+        )
+        .checked(checked)
+    }));
 
     let appearance = settings.appearance;
     let theme = Theme::global(cx);
@@ -168,12 +195,17 @@ pub fn build(cx: &App) -> Vec<Menu> {
             .checked(settings.layout == Layout::Split),
         MenuItem::action("Preview", SetLayout(Layout::Preview))
             .checked(settings.layout == Layout::Preview),
+        MenuItem::action("Focus mode", ToggleFocusMode).checked(settings.focus_mode),
         MenuItem::separator(),
+        MenuItem::action("Tabs", ToggleTabs).checked(settings.tabs),
+        MenuItem::action("File sidebar", ToggleFileSidebar).checked(settings.file_sidebar),
+        MenuItem::action("Outline", ToggleOutline).checked(settings.outline_sidebar),
         MenuItem::action("Go to heading…", GoToHeading),
         MenuItem::separator(),
         MenuItem::action("Sync scrolling", ToggleScrollSync).checked(settings.scroll_sync),
         MenuItem::action("Wrap lines", ToggleSoftWrap).checked(settings.soft_wrap),
         MenuItem::action("Line numbers", ToggleLineNumbers).checked(settings.line_numbers),
+        submenu("Spelling", spelling),
         MenuItem::separator(),
         MenuItem::action("Zoom in", ZoomIn),
         MenuItem::action("Zoom out", ZoomOut),
@@ -206,6 +238,8 @@ pub fn build(cx: &App) -> Vec<Menu> {
             "Malgel",
             vec![
                 MenuItem::action("About Malgel", About),
+                MenuItem::separator(),
+                MenuItem::action("Settings…", OpenSettings),
                 MenuItem::separator(),
                 MenuItem::action("Quit Malgel", Quit),
             ],
