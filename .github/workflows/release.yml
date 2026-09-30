@@ -1,11 +1,11 @@
 # Builds installable Malgel packages for macOS, Windows and Linux.
 #
 # Pushing a tag vX.Y.Z (matching the version in Cargo.toml) publishes a
-# GitHub Release with every package. Running the workflow by hand puts the
-# macOS disk image on a draft release named for the run ("test build") and
-# uploads the other packages as workflow artifacts. The macOS job attaches
-# its disk image to a draft release itself rather than handing it over as an
-# artifact, so it doesn't depend on Actions artifact storage. Code signing and notarization happen
+# GitHub Release with every package. Running the workflow by hand puts them
+# all on a draft release named for the run ("test build") instead. The macOS
+# job attaches its disk image to the draft itself rather than handing it
+# over as an artifact, so it doesn't depend on GitHub-hosted runners or
+# Actions artifact storage. Code signing and notarization happen
 # when the repository secrets described in docs/RELEASING.md are set;
 # without them the macOS app is signed ad hoc and the Windows files are
 # unsigned.
@@ -393,8 +393,9 @@ jobs:
             dist/*.AppImage
           if-no-files-found: error
 
+  # Collects every package on the draft release the macOS job started: a
+  # tag push publishes it, a manual run leaves the test build as a draft.
   release:
-    if: github.event_name == 'push'
     needs: [version, macos, windows, linux]
     runs-on: ubuntu-24.04
     permissions:
@@ -402,22 +403,24 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
-      TAG: ${{ github.ref_name }}
+      # The same draft the macOS job names.
+      TAG: ${{ github.event_name == 'push' && github.ref_name || format('v{0}-build.{1}', needs.version.outputs.version, github.run_number) }}
     steps:
       - uses: actions/download-artifact@v4
         with:
           pattern: malgel-*
           path: dist
           merge-multiple: true
-      # The macOS job left its disk image on the tag's draft release.
       - name: Fetch the macOS disk image
         run: gh release download "$TAG" --pattern '*.dmg' --dir dist
       - name: Checksums
         working-directory: dist
         run: sha256sum -- * | tee SHA256SUMS.txt
+      - name: Attach the packages
+        run: gh release upload "$TAG" dist/* --clobber
       - name: Publish the release
+        if: github.event_name == 'push'
         run: |
-          gh release upload "$TAG" dist/* --clobber
           notes="$(gh api "repos/$GH_REPO/releases/generate-notes" -f tag_name="$TAG" --jq .body)"
           prerelease=false
           if [[ "$TAG" == *-* ]]; then prerelease=true; fi

@@ -13,15 +13,14 @@ publishing anything.
 
 A tag push publishes a GitHub Release with all of these, a
 `SHA256SUMS.txt` and notes generated from the merged pull requests. A
-manual run puts the macOS disk image on a draft release titled
-"Malgel <version> test build <run number>" (under Releases, visible only
-to people who can push to the repository; delete it when you're done), and
-attaches the Windows and Linux files to the workflow run as artifacts
-(`malgel-windows`, `malgel-linux`). Drafts never create a tag.
+manual run puts the same files on a draft release titled
+"Malgel <version> test build <run number>" instead (under Releases, visible
+only to people who can push to the repository; delete it when you're
+done). Drafts never create a tag.
 
 The macOS job attaches its disk image to the draft release itself rather
-than passing it on as an artifact, so it still works when the account's
-Actions artifact storage is full or unavailable.
+than passing it on as an artifact, so it still delivers a signed build
+when GitHub-hosted runners or Actions artifact storage are unavailable.
 
 ## Cutting a release
 
