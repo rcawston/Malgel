@@ -2,6 +2,7 @@
 <component type="desktop-application">
   <id>dev.malgel.Malgel</id>
   <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Apache-2.0</project_license>
   <name>Malgel</name>
   <summary>Write and preview Markdown</summary>
   <developer id="dev.malgel">
@@ -26,7 +27,8 @@
     <binary>malgel</binary>
     <mediatype>text/markdown</mediatype>
   </provides>
-  <url type="homepage">https://github.com/rcawston/Malgel</url>
+  <url type="homepage">https://www.malgel.com</url>
+  <url type="vcs-browser">https://github.com/rcawston/Malgel</url>
   <url type="bugtracker">https://github.com/rcawston/Malgel/issues</url>
   <categories>
     <category>Utility</category>

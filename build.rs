@@ -17,7 +17,12 @@ fn main() {
         .set("ProductName", "Malgel")
         .set("FileDescription", "Malgel")
         .set("InternalName", "malgel")
-        .set("OriginalFilename", "Malgel.exe");
+        .set("OriginalFilename", "Malgel.exe")
+        .set("CompanyName", "Ross Cawston")
+        .set(
+            "LegalCopyright",
+            "Copyright 2026 Ross Cawston. Apache License 2.0.",
+        );
     if let Err(err) = resource.compile() {
         panic!("could not embed the Windows icon and version information: {err}");
     }

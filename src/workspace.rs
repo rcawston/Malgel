@@ -23,6 +23,7 @@ use gpui_kit::{
         dialog::DialogFooter,
         h_flex,
         input::Escape,
+        link::Link,
         menu::AppMenuBar,
         notification::Notification,
         resizable::{h_resizable, resizable_panel},
@@ -1826,16 +1827,35 @@ fn default_app_row(status: default_app::Status, cx: &App) -> impl IntoElement {
         .child(action)
 }
 
-/// Show the version and a one-line description of Malgel.
+/// Malgel's website, linked from the About dialog.
+const WEBSITE: &str = "https://www.malgel.com";
+
+/// Show the version, a one-line description, the website and the license.
 pub fn open_about(window: &mut Window, cx: &mut App) {
-    window.open_alert_dialog(cx, |alert, _, _| {
+    window.open_alert_dialog(cx, |alert, _, cx| {
+        let muted = cx.theme().muted_foreground;
         alert
             .title("Malgel")
-            .description(concat!(
-                "Version ",
-                env!("CARGO_PKG_VERSION"),
-                ". A fast, native Markdown editor built with GPUI Kit."
-            ))
+            .description(
+                v_flex()
+                    .gap_2()
+                    .child(concat!(
+                        "Version ",
+                        env!("CARGO_PKG_VERSION"),
+                        ". A fast, native Markdown editor built with GPUI Kit."
+                    ))
+                    .child(
+                        Link::new("website")
+                            .href(WEBSITE)
+                            .child(WEBSITE.trim_start_matches("https://")),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .child("Licensed under the Apache License, Version 2.0."),
+                    ),
+            )
             .ok_text("OK")
     });
 }

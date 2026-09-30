@@ -336,7 +336,7 @@ jobs:
           $staging = Join-Path $env:RUNNER_TEMP $name
           New-Item -ItemType Directory -Force $staging | Out-Null
           Copy-Item dist/Malgel.exe $staging
-          foreach ($doc in 'README.md', 'LICENSE', 'LICENSE-MIT', 'LICENSE-APACHE') {
+          foreach ($doc in 'README.md', 'LICENSE', 'NOTICE') {
             if (Test-Path $doc) { Copy-Item $doc $staging }
           }
           Compress-Archive -Path $staging -DestinationPath "dist/$name.zip"

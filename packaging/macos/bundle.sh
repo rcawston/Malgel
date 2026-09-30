@@ -26,6 +26,7 @@ install -m755 "$binary" "$app/Contents/MacOS/malgel"
 sed -e "s/@VERSION@/${version%%[-+]*}/g" -e "s/@MIN_MACOS@/$min_macos/g" \
   "$here/Info.plist" >"$app/Contents/Info.plist"
 printf 'APPL????' >"$app/Contents/PkgInfo"
+install -m644 "$here/../../LICENSE" "$here/../../NOTICE" "$app/Contents/Resources/"
 iconutil --convert icns --output "$app/Contents/Resources/Malgel.icns" \
   "$here/Malgel.iconset"
 

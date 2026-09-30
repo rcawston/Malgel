@@ -3,8 +3,9 @@ name = "malgel"
 version = "0.1.0"
 edition = "2024"
 description = "Malgel — a fast, native Markdown editor and previewer built with GPUI Kit."
+license = "Apache-2.0"
 repository = "https://github.com/rcawston/Malgel"
-homepage = "https://github.com/rcawston/Malgel"
+homepage = "https://www.malgel.com"
 publish = false
 
 [dependencies]

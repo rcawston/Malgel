@@ -19,7 +19,8 @@
 
 #define AppName "Malgel"
 #define AppExe "Malgel.exe"
-#define AppUrl "https://github.com/rcawston/Malgel"
+#define AppUrl "https://www.malgel.com"
+#define RepoUrl "https://github.com/rcawston/Malgel"
 #define ProgId "Malgel.Markdown"
 
 [Setup]
@@ -29,8 +30,9 @@ AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
 AppPublisher={#AppName}
 AppPublisherURL={#AppUrl}
-AppSupportURL={#AppUrl}/issues
-AppUpdatesURL={#AppUrl}/releases
+AppSupportURL={#RepoUrl}/issues
+AppUpdatesURL={#RepoUrl}/releases
+AppCopyright=Copyright 2026 Ross Cawston
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
@@ -57,6 +59,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "{#SourceExe}"; DestDir: "{app}"; DestName: "{#AppExe}"; Flags: ignoreversion
+Source: "..\..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
+Source: "..\..\NOTICE"; DestDir: "{app}"; DestName: "NOTICE.txt"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"

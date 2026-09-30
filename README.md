@@ -2,6 +2,7 @@
 
 A fast, native Markdown editor and previewer written in pure Rust with
 [GPUI Kit](https://github.com/longbridge/gpui-kit) (GPUI + GPUI Component).
+[www.malgel.com](https://www.malgel.com)
 
 ![Malgel in the light appearance](docs/screenshot-light.png)
 
@@ -267,3 +268,14 @@ Rust implementation of [Mermaid](https://mermaid.js.org/) (both MIT).
 LaTeX math is translated to Typst by [Tylax](https://github.com/scipenai/tylax),
 which builds on [MiTeX](https://github.com/mitex-rs/mitex)'s parser, and typeset
 by [Typst](https://typst.app) (all Apache-2.0).
+
+## Contributing
+
+Issues and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
+Contributions need agreement to the [Contributor License Agreement](CLA.md),
+which a bot asks for on your first pull request.
+
+## License
+
+Malgel is licensed under the [Apache License, Version 2.0](LICENSE).
+Copyright 2026 Ross Cawston; see also [NOTICE](NOTICE).

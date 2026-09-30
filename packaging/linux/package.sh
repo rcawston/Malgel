@@ -42,7 +42,7 @@ install_prefix() {
 # Tarball.
 name="malgel-$version-linux-$arch"
 install_prefix "$work/$name"
-for doc in README.md LICENSE LICENSE-MIT LICENSE-APACHE; do
+for doc in README.md LICENSE NOTICE; do
   if [[ -f "$root/$doc" ]]; then
     install -Dm644 "$root/$doc" "$work/$name/share/doc/malgel/$doc"
   fi
