@@ -1,8 +1,11 @@
 # Builds installable Malgel packages for macOS, Windows and Linux.
 #
 # Pushing a tag vX.Y.Z (matching the version in Cargo.toml) publishes a
-# GitHub Release with every package; running the workflow by hand only
-# uploads them as workflow artifacts. Code signing and notarization happen
+# GitHub Release with every package. Running the workflow by hand puts the
+# macOS disk image on a draft release named for the run ("test build") and
+# uploads the other packages as workflow artifacts. The macOS job attaches
+# its disk image to a draft release itself rather than handing it over as an
+# artifact, so it doesn't depend on Actions artifact storage. Code signing and notarization happen
 # when the repository secrets described in docs/RELEASING.md are set;
 # without them the macOS app is signed ad hoc and the Windows files are
 # unsigned.
@@ -48,6 +51,8 @@ jobs:
     # wherever its runner is available.
     runs-on: ${{ vars.MACOS_RUNNER || 'macos-14' }}
     timeout-minutes: 180
+    permissions:
+      contents: write
     env:
       MACOSX_DEPLOYMENT_TARGET: "11.0"
       HAS_SIGNING: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}
@@ -172,11 +177,27 @@ jobs:
         if: always() && env.KEYCHAIN != ''
         run: security delete-keychain "$KEYCHAIN" || true
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: malgel-macos
-          path: dist/${{ env.DMG }}
-          if-no-files-found: error
+      - name: Attach the disk image to a draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if ! command -v gh >/dev/null; then
+            brew install gh
+          fi
+          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+            tag="$GITHUB_REF_NAME"
+            title="Malgel $VERSION"
+          else
+            tag="v$VERSION-build.$GITHUB_RUN_NUMBER"
+            title="Malgel $VERSION test build $GITHUB_RUN_NUMBER"
+          fi
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --draft --target "$GITHUB_SHA" \
+              --title "$title" --notes "Built from $GITHUB_SHA by run $GITHUB_RUN_ID."
+          fi
+          gh release upload "$tag" "dist/$DMG" --clobber
+          echo "::notice::$DMG is attached to the draft release $tag"
 
   windows:
     needs: version
@@ -311,19 +332,27 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
     steps:
       - uses: actions/download-artifact@v4
         with:
           pattern: malgel-*
           path: dist
           merge-multiple: true
+      # The macOS job left its disk image on the tag's draft release.
+      - name: Fetch the macOS disk image
+        run: gh release download "$TAG" --pattern '*.dmg' --dir dist
       - name: Checksums
         working-directory: dist
         run: sha256sum -- * | tee SHA256SUMS.txt
-      - uses: softprops/action-gh-release@v2
-        with:
-          name: Malgel ${{ needs.version.outputs.version }}
-          files: dist/*
-          generate_release_notes: true
-          prerelease: ${{ contains(github.ref_name, '-') }}
-          fail_on_unmatched_files: true
+      - name: Publish the release
+        run: |
+          gh release upload "$TAG" dist/* --clobber
+          notes="$(gh api "repos/$GH_REPO/releases/generate-notes" -f tag_name="$TAG" --jq .body)"
+          prerelease=false
+          if [[ "$TAG" == *-* ]]; then prerelease=true; fi
+          gh release edit "$TAG" --draft=false --prerelease="$prerelease" \
+            --title "Malgel ${{ needs.version.outputs.version }}" --notes "$notes"
