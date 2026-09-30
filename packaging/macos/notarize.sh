@@ -35,11 +35,35 @@ if [[ -d "$target" ]]; then
   ditto -c -k --keepParent "$target" "$upload"
 fi
 
+# Apple's servers are sometimes briefly unreachable from build machines, so
+# each step that talks to them is retried, waiting longer each time.
+attempts=5
+pause() {
+  local seconds=$((30 * $1))
+  echo "::warning::$2 (attempt $1 of $attempts); retrying in ${seconds}s"
+  sleep "$seconds"
+}
+
 result="$work/result.json"
-xcrun notarytool submit "$upload" "${auth[@]}" --wait --timeout 1h \
-  --output-format json >"$result" || true
-status="$(jq -r '.status // empty' "$result")"
-id="$(jq -r '.id // empty' "$result")"
+id=""
+status=""
+# Upload. Without a submission id nothing reached Apple, so try again.
+for attempt in $(seq 1 "$attempts"); do
+  xcrun notarytool submit "$upload" "${auth[@]}" --wait --timeout 1h \
+    --output-format json >"$result" || true
+  id="$(jq -r '.id // empty' "$result" 2>/dev/null || true)"
+  status="$(jq -r '.status // empty' "$result" 2>/dev/null || true)"
+  [[ -n "$id" ]] && break
+  ((attempt < attempts)) && pause "$attempt" "Couldn't submit $(basename "$target") to Apple"
+done
+# Uploaded, but the connection dropped while waiting for the verdict.
+for attempt in $(seq 1 "$attempts"); do
+  [[ -z "$id" || "$status" == "Accepted" || "$status" == "Invalid" || "$status" == "Rejected" ]] && break
+  pause "$attempt" "Lost track of notarization $id ($status)"
+  xcrun notarytool wait "$id" "${auth[@]}" --timeout 1h --output-format json >"$result" || true
+  status="$(jq -r '.status // empty' "$result" 2>/dev/null || true)"
+done
+
 echo "Notarization of $(basename "$target"): ${status:-no status} (${id:-no submission id})"
 if [[ "$status" != "Accepted" ]]; then
   cat "$result" >&2
@@ -49,5 +73,12 @@ if [[ "$status" != "Accepted" ]]; then
   exit 1
 fi
 
-xcrun stapler staple "$target"
+# Stapling downloads the ticket from Apple too.
+for attempt in $(seq 1 "$attempts"); do
+  xcrun stapler staple "$target" && break
+  if ((attempt == attempts)); then
+    exit 1
+  fi
+  pause "$attempt" "Couldn't staple the notarization ticket"
+done
 xcrun stapler validate "$target"
