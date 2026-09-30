@@ -7,7 +7,7 @@ publishing anything.
 
 | Platform | Files | Built on |
 | --- | --- | --- |
-| macOS 11+ | `Malgel-<version>-macos-universal.dmg`: `Malgel.app` for Apple silicon and Intel, with an Applications shortcut | `macos-14` |
+| macOS 11+ | `Malgel-<version>-macos-universal.dmg`: `Malgel.app` for Apple silicon and Intel, with an Applications shortcut | `macos-26` |
 | Windows 10+ | `Malgel-<version>-windows-x64-setup.exe` (installer) and `Malgel-<version>-windows-x64.zip` (portable `Malgel.exe`) | `windows-latest` |
 | Linux x86_64 | `Malgel-<version>-x86_64.AppImage` and `malgel-<version>-linux-x86_64.tar.gz` | `ubuntu-22.04` |
 
@@ -121,7 +121,7 @@ outcome.
 ### Other macOS runners
 
 The macOS jobs in both CI and the release workflow run on GitHub's
-`macos-14` runner unless the repository variable `MACOS_RUNNER` names
+`macos-26` runner unless the repository variable `MACOS_RUNNER` names
 another (**Settings → Secrets and variables → Actions → Variables**). For
 a third-party service such as [GetMac](https://getmac.io/github-runners),
 install its GitHub App for this repository and set `MACOS_RUNNER` to the

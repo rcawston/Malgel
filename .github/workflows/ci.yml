@@ -49,9 +49,9 @@ jobs:
   macos:
     # Only when CI is run by hand, as macOS runners are billed by the
     # minute. The repository variable MACOS_RUNNER picks another macOS
-    # runner, such as GetMac's; GitHub's macOS 14 runner otherwise.
+    # runner, such as GetMac's; GitHub's macOS 26 runner otherwise.
     if: github.event_name == 'workflow_dispatch'
-    runs-on: ${{ vars.MACOS_RUNNER || 'macos-14' }}
+    runs-on: ${{ vars.MACOS_RUNNER || 'macos-26' }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
