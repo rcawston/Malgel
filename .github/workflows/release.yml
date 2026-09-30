@@ -55,7 +55,9 @@ jobs:
       contents: write
     env:
       MACOSX_DEPLOYMENT_TARGET: "11.0"
-      HAS_SIGNING: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}
+      # A certificate exported with a blank password is fine, so the
+      # password may be empty.
+      HAS_SIGNING: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}
       HAS_NOTARY: ${{ (secrets.APPLE_API_KEY != '' && secrets.APPLE_API_KEY_ID != '' && secrets.APPLE_API_ISSUER != '') || (secrets.APPLE_ID != '' && secrets.APPLE_TEAM_ID != '' && secrets.APPLE_APP_SPECIFIC_PASSWORD != '') }}
     steps:
       - uses: actions/checkout@v4
@@ -90,17 +92,38 @@ jobs:
       - name: Assemble Malgel.app
         run: packaging/macos/bundle.sh dist/malgel "$VERSION" dist
 
+      - name: Check the signing secrets
+        env:
+          CERTIFICATE_SET: ${{ secrets.APPLE_CERTIFICATE != '' }}
+          PASSWORD_SET: ${{ secrets.APPLE_CERTIFICATE_PASSWORD != '' }}
+          IDENTITY_SET: ${{ secrets.APPLE_SIGNING_IDENTITY != '' }}
+        run: |
+          # Report which secrets arrived without printing any of them; a
+          # secret that exists but is empty looks the same as a missing one.
+          echo "APPLE_CERTIFICATE set: $CERTIFICATE_SET"
+          echo "APPLE_CERTIFICATE_PASSWORD set: $PASSWORD_SET (may be empty for a certificate with a blank password)"
+          echo "APPLE_SIGNING_IDENTITY set: $IDENTITY_SET"
+          echo "Notarization credentials set: $HAS_NOTARY"
+          if [[ "$HAS_SIGNING" != true ]]; then
+            echo "::warning::Signing is off: APPLE_CERTIFICATE and APPLE_SIGNING_IDENTITY must both be non-empty"
+          fi
+
       - name: Import the signing certificate
         if: env.HAS_SIGNING == 'true'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
           keychain="$RUNNER_TEMP/malgel-signing.keychain-db"
           keychain_password="$(openssl rand -base64 32)"
           echo "::add-mask::$keychain_password"
           certificate="$RUNNER_TEMP/certificate.p12"
           printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$certificate"
+          if [[ ! -s "$certificate" ]]; then
+            echo "::error::APPLE_CERTIFICATE isn't base64 of a .p12 file"
+            exit 1
+          fi
           echo "KEYCHAIN=$keychain" >> "$GITHUB_ENV"
           security create-keychain -p "$keychain_password" "$keychain"
           security set-keychain-settings -lut 21600 "$keychain"
@@ -112,6 +135,12 @@ jobs:
             -s -k "$keychain_password" "$keychain" > /dev/null
           # Search the new keychain first, keeping the existing ones.
           security list-keychains -d user | xargs security list-keychains -d user -s "$keychain"
+          identities="$(security find-identity -v -p codesigning "$keychain")"
+          echo "$identities"
+          if ! grep -qiF -- "$APPLE_SIGNING_IDENTITY" <<< "$identities"; then
+            echo "::error::The certificate has no valid signing identity named APPLE_SIGNING_IDENTITY; the list above shows what it has"
+            exit 1
+          fi
 
       - name: Sign Malgel.app
         env:
@@ -225,6 +254,22 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item target/x86_64-pc-windows-msvc/release/malgel.exe dist/Malgel.exe
+
+      - name: Check the signing secrets
+        env:
+          CERTIFICATE_SET: ${{ secrets.APPLE_CERTIFICATE != '' }}
+          PASSWORD_SET: ${{ secrets.APPLE_CERTIFICATE_PASSWORD != '' }}
+          IDENTITY_SET: ${{ secrets.APPLE_SIGNING_IDENTITY != '' }}
+        run: |
+          # Report which secrets arrived without printing any of them; a
+          # secret that exists but is empty looks the same as a missing one.
+          echo "APPLE_CERTIFICATE set: $CERTIFICATE_SET"
+          echo "APPLE_CERTIFICATE_PASSWORD set: $PASSWORD_SET (may be empty for a certificate with a blank password)"
+          echo "APPLE_SIGNING_IDENTITY set: $IDENTITY_SET"
+          echo "Notarization credentials set: $HAS_NOTARY"
+          if [[ "$HAS_SIGNING" != true ]]; then
+            echo "::warning::Signing is off: APPLE_CERTIFICATE and APPLE_SIGNING_IDENTITY must both be non-empty"
+          fi
 
       - name: Import the signing certificate
         if: env.HAS_SIGNING == 'true'

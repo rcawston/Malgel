@@ -55,7 +55,7 @@ Actions → New repository secret**, or with the GitHub CLI
 | Secret | Used for |
 | --- | --- |
 | `APPLE_CERTIFICATE` | Developer ID Application certificate and private key: a `.p12` file, base64-encoded |
-| `APPLE_CERTIFICATE_PASSWORD` | Password of that `.p12` |
+| `APPLE_CERTIFICATE_PASSWORD` | Password of that `.p12` (leave it unset if the `.p12` has a blank password) |
 | `APPLE_SIGNING_IDENTITY` | Certificate name, e.g. `Developer ID Application: Jane Doe (AB12CD34EF)` |
 | `APPLE_API_KEY` | Notarization with an App Store Connect API key: the `.p8` file, base64-encoded |
 | `APPLE_API_KEY_ID` | That key's ID |
