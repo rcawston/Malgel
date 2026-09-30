@@ -89,6 +89,9 @@ jobs:
       # fails, so a retry doesn't start from scratch.
       - uses: Swatinem/rust-cache@v2
         with:
+          # CI has jobs with the same names that cache debug builds; without
+          # its own key, a release job would restore those and rebuild.
+          key: release
           cache-on-failure: true
 
       - name: Check the signing secrets
@@ -286,6 +289,7 @@ jobs:
       # Compiled dependencies; see the macOS job.
       - uses: Swatinem/rust-cache@v2
         with:
+          key: release
           cache-on-failure: true
 
       - name: Build
@@ -375,6 +379,7 @@ jobs:
       # Compiled dependencies; see the macOS job.
       - uses: Swatinem/rust-cache@v2
         with:
+          key: release
           cache-on-failure: true
 
       - name: Build
