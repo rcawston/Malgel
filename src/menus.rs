@@ -46,6 +46,11 @@ fn update(app_menu_bar: &Entity<AppMenuBar>, cx: &mut App) {
     app_menu_bar.update(cx, |menu_bar, cx| menu_bar.reload(cx));
 }
 
+/// The most entries (separators included) a menu shows in full; GPUI Kit
+/// turns longer ones into short scrolling lists.
+#[cfg(test)]
+const MAX_MENU_ITEMS: usize = 20;
+
 fn submenu(name: &str, items: Vec<MenuItem>) -> MenuItem {
     MenuItem::Submenu(Menu {
         name: SharedString::from(name.to_string()),
@@ -211,6 +216,8 @@ pub fn build(cx: &App) -> Vec<Menu> {
         MenuItem::action("Zoom out", ZoomOut),
         MenuItem::action("Actual size", ZoomReset),
         MenuItem::separator(),
+        // Themes live in the Appearance submenu: menus with more than
+        // MAX_MENU_ITEMS entries turn into small scrolling lists.
         submenu(
             "Appearance",
             vec![
@@ -220,10 +227,11 @@ pub fn build(cx: &App) -> Vec<Menu> {
                     .checked(appearance == Appearance::Light),
                 MenuItem::action("Dark", SetAppearance(Appearance::Dark))
                     .checked(appearance == Appearance::Dark),
+                MenuItem::separator(),
+                submenu("Light theme", theme_items(ThemeMode::Light)),
+                submenu("Dark theme", theme_items(ThemeMode::Dark)),
             ],
         ),
-        submenu("Light theme", theme_items(ThemeMode::Light)),
-        submenu("Dark theme", theme_items(ThemeMode::Dark)),
     ];
 
     let mut help = vec![MenuItem::action("Markdown guide", OpenMarkdownGuide)];
@@ -283,6 +291,32 @@ mod tests {
                 })
                 .collect();
             assert_eq!(checked, ["Preview", "Sync scrolling", "Line numbers"]);
+        });
+    }
+
+    #[gpui_kit::test]
+    fn no_menu_is_long_enough_to_scroll(cx: &mut gpui_kit::TestAppContext) {
+        fn check(name: &str, items: &[MenuItem]) {
+            assert!(
+                items.len() <= MAX_MENU_ITEMS,
+                "{name} has {} items; menus with more than {MAX_MENU_ITEMS} scroll",
+                items.len()
+            );
+            for item in items {
+                if let MenuItem::Submenu(submenu) = item {
+                    check(&submenu.name, &submenu.items);
+                }
+            }
+        }
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::themes::init(Settings::default(), cx);
+            cx.set_global(AppSettings(Settings::default()));
+        });
+        cx.read(|cx| {
+            for menu in build(cx) {
+                check(&menu.name, &menu.items);
+            }
         });
     }
 }

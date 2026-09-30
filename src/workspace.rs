@@ -1335,6 +1335,11 @@ impl Workspace {
             )
             .child(
                 h_flex()
+                    .id("title-bar-buttons")
+                    // Take clicks for these buttons rather than the title
+                    // bar's drag area behind them, which on Windows would
+                    // treat them as clicks on the caption.
+                    .occlude()
                     .flex_shrink_0()
                     .gap_2()
                     .pr_2()
