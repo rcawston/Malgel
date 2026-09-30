@@ -1362,7 +1362,7 @@ fn store_image(
             .file_stem()
             .map(|stem| stem.to_string_lossy().to_string())
             .unwrap_or_default();
-        return Ok((relative.to_string_lossy().to_string(), alt));
+        return Ok((link_path(relative), alt));
     }
     let target_dir = dir.join(folder);
     std::fs::create_dir_all(&target_dir)?;
@@ -1403,16 +1403,22 @@ fn store_image(
             std::fs::copy(path, &target)?;
         }
     }
-    let relative = target
-        .strip_prefix(dir)
-        .map(|relative| relative.to_string_lossy().to_string())
-        .unwrap_or_else(|_| target.to_string_lossy().to_string());
+    let relative = link_path(target.strip_prefix(dir).unwrap_or(&target));
     // Pasted images have no name worth describing them by.
     let alt = match image {
         ImageSource::Bytes(..) => "image".to_string(),
         ImageSource::File(_) => name,
     };
     Ok((relative, alt))
+}
+
+/// `path` as a Markdown link, which separates folders with `/` on every
+/// system (Windows paths use `\\`).
+fn link_path(path: &Path) -> String {
+    path.components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 /// `YYYYMMDD-HHMMSS` in UTC, for naming pasted images.
@@ -1492,6 +1498,12 @@ mod tests {
         assert_eq!(&text[paragraph_at(text, 6)], "two\nlines");
         assert_eq!(&text[paragraph_at(text, 0)], "one");
         assert_eq!(&text[paragraph_at(text, text.len())], "three");
+    }
+
+    #[test]
+    fn links_use_forward_slashes() {
+        let path = Path::new("assets").join("shots").join("a b.png");
+        assert_eq!(link_path(&path), "assets/shots/a b.png");
     }
 
     #[test]
