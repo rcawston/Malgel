@@ -78,6 +78,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin, x86_64-apple-darwin
+      # Compiled dependencies, restored so a release rebuilds little but
+      # Malgel itself. Saved even when a later step (signing, packaging)
+      # fails, so a retry doesn't start from scratch.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
 
       - name: Check the signing secrets
         env:
@@ -153,8 +159,10 @@ jobs:
 
       - name: Build a universal binary
         run: |
-          cargo build --release --locked --target aarch64-apple-darwin
-          cargo build --release --locked --target x86_64-apple-darwin
+          # One cargo run for both, so build scripts and proc macros are
+          # compiled once and the two builds share every core.
+          cargo build --release --locked \
+            --target aarch64-apple-darwin --target x86_64-apple-darwin
           mkdir -p dist
           lipo -create -output dist/malgel \
             target/aarch64-apple-darwin/release/malgel \
@@ -268,6 +276,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
+      # Compiled dependencies; see the macOS job.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
 
       - name: Build
         run: cargo build --release --locked --target x86_64-pc-windows-msvc
@@ -369,6 +381,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libfontconfig-dev libwayland-dev libxkbcommon-x11-dev libx11-xcb-dev libssl-dev libzstd-dev libvulkan1
       - uses: dtolnay/rust-toolchain@stable
+      # Compiled dependencies; see the macOS job.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
 
       - name: Build
         run: cargo build --release --locked
