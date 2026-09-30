@@ -264,3 +264,6 @@ The bundled American English dictionary in `dictionaries/` is from
 is in `dictionaries/en_US-LICENSE.txt`.
 Mermaid diagrams are drawn by [merman](https://github.com/Latias94/merman), a
 Rust implementation of [Mermaid](https://mermaid.js.org/) (both MIT).
+LaTeX math is translated to Typst by [Tylax](https://github.com/scipenai/tylax),
+which builds on [MiTeX](https://github.com/mitex-rs/mitex)'s parser, and typeset
+by [Typst](https://typst.app) (all Apache-2.0).

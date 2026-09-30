@@ -71,16 +71,150 @@ pub fn render_png(
     })
 }
 
-fn layout(tex: &str, style: MathStyle, font_size: f32, color: &str) -> Result<Page, String> {
-    let math = tex2typst_rs::tex2typst(tex.trim())
-        .map_err(|err| format!("Couldn’t read the formula: {err}."))?;
-    let body = match style {
+/// Translate the LaTeX formula `tex` to Typst math markup (without the
+/// surrounding dollars).
+pub fn to_typst(tex: &str) -> Result<String, String> {
+    let tex = tex.trim();
+    // The converter closes whatever is left open; say so instead of
+    // quietly drawing something else.
+    if let Some(problem) = unbalanced(tex) {
+        return Err(format!("Couldn’t read the formula: {problem}."));
+    }
+    // The converter is written for well-formed input; formulas are converted
+    // as they are typed, so never let a half-written one take down a thread.
+    let math = std::panic::catch_unwind(|| tylax::latex_to_typst(tex))
+        .map_err(|_| "Couldn’t read the formula.".to_string())?;
+    // It reports what it can't match as a comment and carries on.
+    if math.contains("/* LaTeX Error") {
+        return Err("Couldn’t read the formula: a brace or environment isn’t closed.".into());
+    }
+    let math = math.trim();
+    // Environments such as `align` come back as a whole equation.
+    let math = math
+        .strip_prefix('$')
+        .and_then(|math| math.strip_suffix('$'))
+        .unwrap_or(math)
+        .trim();
+    Ok(space_cases(math))
+}
+
+/// Put a quad between each case and its condition, as LaTeX's `cases` does;
+/// Typst's aligns them with no gap.
+fn space_cases(math: &str) -> String {
+    const OPEN: &str = "cases(";
+    let mut out = String::with_capacity(math.len());
+    let mut rest = math;
+    while let Some(start) = rest.find(OPEN) {
+        let (before, after) = rest.split_at(start + OPEN.len());
+        out.push_str(before);
+        // Walk the arguments, spacing alignment points at their own level.
+        let mut depth = 0usize;
+        let mut in_string = false;
+        let mut end = after.len();
+        let mut chars = after.char_indices().peekable();
+        while let Some((index, ch)) = chars.next() {
+            match ch {
+                '"' => in_string = !in_string,
+                '\\' if in_string => {
+                    chars.next();
+                }
+                _ if in_string => {}
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' if depth == 0 => {
+                    end = index;
+                    break;
+                }
+                ')' | ']' | '}' => depth -= 1,
+                '&' if depth == 0 => {
+                    out.push_str("& quad");
+                    continue;
+                }
+                _ => {}
+            }
+            out.push(ch);
+        }
+        rest = &after[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// What is left open (or closed without being opened) in `tex`, if anything.
+fn unbalanced(tex: &str) -> Option<&'static str> {
+    let (mut braces, mut environments, mut delimiters) = (0i32, 0i32, 0i32);
+    let mut chars = tex.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => {
+                let mut name = String::new();
+                while let Some(&next) = chars.peek() {
+                    if !next.is_ascii_alphabetic() {
+                        break;
+                    }
+                    name.push(next);
+                    chars.next();
+                }
+                match name.as_str() {
+                    // An escaped character such as `\{` or `\\`.
+                    "" => {
+                        chars.next();
+                    }
+                    "begin" => environments += 1,
+                    "end" => environments -= 1,
+                    "left" => delimiters += 1,
+                    "right" => delimiters -= 1,
+                    _ => {}
+                }
+            }
+            '{' => braces += 1,
+            '}' => braces -= 1,
+            _ => {}
+        }
+        if braces < 0 {
+            return Some("a closing brace has no opening one");
+        }
+        if environments < 0 {
+            return Some("an \\end has no \\begin");
+        }
+        if delimiters < 0 {
+            return Some("a \\right has no \\left");
+        }
+    }
+    if braces > 0 {
+        Some("a brace isn’t closed")
+    } else if environments > 0 {
+        Some("a \\begin has no \\end")
+    } else if delimiters > 0 {
+        Some("a \\left has no \\right")
+    } else {
+        None
+    }
+}
+
+/// Typst markup for the Typst math `math` as an equation in `style`.
+pub fn equation(math: &str, style: MathStyle) -> String {
+    match style {
         // Spaces inside the dollars make Typst lay out a display equation.
         MathStyle::Display => format!("$ {math} $"),
         // A box keeps the formula's baseline in the page frame, which
         // Typst otherwise flattens away for single-term formulas.
         MathStyle::Inline => format!("#box[${math}$]"),
-    };
+    }
+}
+
+/// The Typst math for `tex` once it is known to typeset, for documents
+/// where one bad formula would otherwise stop the whole document.
+pub fn checked_typst(tex: &str, style: MathStyle) -> Result<String, String> {
+    let math = to_typst(tex)?;
+    typeset(&equation(&math, style), 11., "#000000ff")?;
+    Ok(math)
+}
+
+fn layout(tex: &str, style: MathStyle, font_size: f32, color: &str) -> Result<Page, String> {
+    typeset(&equation(&to_typst(tex)?, style), font_size, color)
+}
+
+fn typeset(body: &str, font_size: f32, color: &str) -> Result<Page, String> {
     let source = format!(
         "#set page(width: auto, height: auto, margin: 0pt, fill: none)\n\
          #set text(size: {font_size}pt, fill: rgb(\"{color}\"), top-edge: \"bounds\", bottom-edge: \"bounds\")\n\
@@ -156,6 +290,88 @@ mod tests {
 
     #[test]
     fn reports_unsupported_input() {
-        assert!(render(r"\frac{1}{", MathStyle::Inline, 16., "#000000ff").is_err());
+        for tex in [
+            r"\frac{1}{",
+            r"\frac{a}",
+            "}",
+            r"\end{cases}",
+            r"\foo{x}",
+            r"\sqrt",
+            r"x^{2",
+            r"\left( x",
+            r"\begin{matrix} a",
+        ] {
+            assert!(
+                render(tex, MathStyle::Inline, 16., "#000000ff").is_err(),
+                "{tex}"
+            );
+            assert!(checked_typst(tex, MathStyle::Inline).is_err(), "{tex}");
+        }
+    }
+
+    #[test]
+    fn finds_what_is_left_open() {
+        assert_eq!(unbalanced(r"\frac{1}{"), Some("a brace isn’t closed"));
+        assert_eq!(unbalanced("a}"), Some("a closing brace has no opening one"));
+        assert_eq!(
+            unbalanced(r"\begin{cases} x"),
+            Some("a \\begin has no \\end")
+        );
+        assert_eq!(unbalanced(r"\left( x"), Some("a \\left has no \\right"));
+        // Escaped braces and line breaks aren't groups.
+        assert_eq!(unbalanced(r"\{ a \} \\ {b}"), None);
+        assert_eq!(unbalanced(r"\left\{ x \right."), None);
+        assert_eq!(unbalanced(r"\begin{cases} 1 \end{cases}"), None);
+    }
+
+    #[test]
+    fn spaces_cases_like_latex() {
+        assert_eq!(
+            space_cases(r#"f(x) = cases(1 & x > 0, 0 & #text[otherwise])"#),
+            r#"f(x) = cases(1 & quad x > 0, 0 & quad #text[otherwise])"#
+        );
+        // Only the alignment points of the cases themselves.
+        assert_eq!(
+            space_cases(r#"cases(mat(a & b) & "&", x) & y"#),
+            r#"cases(mat(a & b) & quad "&", x) & y"#
+        );
+    }
+
+    #[test]
+    fn translates_common_latex() {
+        let cases = [
+            (r"\frac{a}{b}", "a/b"),
+            (r"\sqrt[3]{x}", "root(3, x)"),
+            (r"\alpha \le \beta", "alpha <= beta"),
+            (r"\mathbb{R}^n", "RR^(n)"),
+            (
+                r"\begin{pmatrix} a & b \\ c & d \end{pmatrix}",
+                r#"mat(delim: "(", a, b ; c, d)"#,
+            ),
+            (
+                r"\begin{align} a &= b \\ c &= d \end{align}",
+                r"a & = b \ c & = d",
+            ),
+        ];
+        for (tex, typst) in cases {
+            assert_eq!(to_typst(tex).unwrap(), typst, "{tex}");
+        }
+    }
+
+    #[test]
+    fn typesets_the_usual_constructs() {
+        for tex in [
+            r"\sum_{i=1}^{n} i = \frac{n(n+1)}{2}",
+            r"\int_0^\infty e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}",
+            r"f(x) = \begin{cases} 1 & x > 0 \\ 0 & \text{otherwise} \end{cases}",
+            r"\begin{aligned} x &= 1 \\ y &= 2 \end{aligned}",
+            r"\begin{align} a &= b \\ c &= d \end{align}",
+            r"\left( \frac{1}{2} \right) \langle x, y \rangle \| v \|",
+            r"\mathbf{v} \cdot \hat{x} \vec{v} \overline{AB} \operatorname{sin} x",
+            r"\lim_{x \to 0} \frac{\sin x}{x} \neq \infty",
+            r"\binom{n}{k} \color{red}{x} \mathrm{d}x",
+        ] {
+            assert!(checked_typst(tex, MathStyle::Display).is_ok(), "{tex}");
+        }
     }
 }

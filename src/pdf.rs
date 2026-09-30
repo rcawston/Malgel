@@ -16,6 +16,7 @@ use crate::{
     analysis::preview_parse_options,
     diagram::{self, DiagramTheme},
     images,
+    math::MathStyle,
     preview_ext::{AlertKind, display_math_source, is_inline_math, parse_alert},
     typst_world::{self, VirtualFiles, escape_markup, string_literal},
 };
@@ -573,7 +574,12 @@ fn missing_image(alt: &str) -> String {
 
 /// Typst math for a LaTeX formula, or its source in red if it can't be read.
 fn math(tex: &str, display: bool) -> String {
-    match tex2typst_rs::tex2typst(tex.trim()) {
+    let style = if display {
+        MathStyle::Display
+    } else {
+        MathStyle::Inline
+    };
+    match crate::math::checked_typst(tex, style) {
         Ok(math) if display => format!("$ {math} $"),
         Ok(math) => format!("${math}$"),
         Err(_) => format!(
