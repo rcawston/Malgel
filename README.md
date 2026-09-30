@@ -141,6 +141,12 @@ Download Malgel from the
   tarball into `~/.local`:
   `tar -xzf malgel-*-linux-x86_64.tar.gz -C ~/.local --strip-components=1`.
 
+To open Markdown files in Malgel when you double-click them, use **Default
+app for Markdown** in Settings. On macOS and Linux it makes Malgel the
+default (from the AppImage or tarball it first adds Malgel to your
+applications); Windows only lets you choose a default yourself, so there it
+registers Malgel and opens the Default apps page in Windows Settings.
+
 Builds made without signing certificates are unsigned (ad-hoc signed on
 macOS); [docs/RELEASING.md](docs/RELEASING.md) explains how to open them.
 
@@ -229,6 +235,7 @@ dictionaries and on macOS those in `~/Library/Spelling` are found too.
 | `src/spell.rs` | Spell checking of prose with Hunspell dictionaries |
 | `src/session.rs` | The last session and recovered unsaved changes |
 | `src/rich_copy.rs` | Copy as rich text |
+| `src/default_app.rs` | Making Malgel the default app for Markdown files on each system |
 | `src/analysis.rs` | Background statistics, outline and block index |
 | `src/format.rs` | Formatting commands as pure, tested text transforms |
 | `src/document.rs` | Loading and atomically saving files, line endings |

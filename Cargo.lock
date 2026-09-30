@@ -4776,6 +4776,8 @@ dependencies = [
  "arboard",
  "base64 0.22.1",
  "comemo",
+ "core-foundation 0.10.1",
+ "core-foundation-sys",
  "docx-rs",
  "fontdb",
  "futures",
@@ -4799,6 +4801,8 @@ dependencies = [
  "unicode-segmentation",
  "unicode-width",
  "url",
+ "windows-registry 0.6.1",
+ "windows-sys 0.61.2",
  "winresource",
  "zip",
 ]

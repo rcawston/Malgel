@@ -83,6 +83,15 @@ typst-render = "0.15.1"
 typst-svg = "0.15.1"
 serde_json = "1"
 
+# "Default app for Markdown" in Settings.
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+core-foundation-sys = "0.8"
+
+[target.'cfg(windows)'.dependencies]
+windows-registry = "0.6"
+windows-sys = { version = "0.61", features = ["Win32_UI_Shell"] }
+
 [build-dependencies]
 # Windows only (build.rs checks the target): the exe's icon and version info.
 winresource = { version = "0.1.31", default-features = false }

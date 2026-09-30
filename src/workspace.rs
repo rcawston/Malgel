@@ -39,6 +39,7 @@ use gpui_kit::{
 use crate::{
     actions::*,
     analysis::{Analysis, content_hash},
+    default_app,
     document::{self, LineEnding, display_name, is_markdown_path},
     document_view::{DocumentEvent, DocumentView},
     docx, export,
@@ -1636,8 +1637,12 @@ pub fn open_settings(window: &mut Window, cx: &mut App) {
     if window.has_active_dialog(cx) {
         return;
     }
+    // Ask the system afresh each time, as the user may have changed the
+    // default app elsewhere.
+    default_app::refresh(cx);
     window.open_dialog(cx, |dialog, _, cx| {
         let settings = AppSettings::get(cx).clone();
+        let default_status = default_app::status(cx);
         let row = |id: &'static str,
                    title: &'static str,
                    description: &'static str,
@@ -1743,9 +1748,77 @@ pub fn open_settings(window: &mut Window, cx: &mut App) {
                     settings.line_numbers,
                     |settings, on| settings.line_numbers = on,
                     cx,
-                )),
+                ))
+                .child(section("FILES"))
+                .child(default_app_row(default_status, cx)),
         )
     });
+}
+
+/// The settings row that makes Malgel the app for Markdown files.
+fn default_app_row(status: default_app::Status, cx: &App) -> impl IntoElement {
+    let is_default = status == default_app::Status::Default;
+    let description = if is_default {
+        "Markdown files you open from your desktop open in Malgel."
+    } else if default_app::CHOSEN_IN_SYSTEM_SETTINGS {
+        "Choose Malgel for Markdown files in Windows Settings."
+    } else {
+        "Open Markdown files from your desktop in Malgel."
+    };
+    let action = if is_default {
+        h_flex()
+            .gap_1()
+            .text_sm()
+            .text_color(cx.theme().muted_foreground)
+            .child(Icon::new(IconName::Check).small())
+            .child("Default")
+            .into_any_element()
+    } else {
+        let label = if default_app::CHOSEN_IN_SYSTEM_SETTINGS {
+            "Open Settings…"
+        } else {
+            "Make Default"
+        };
+        Button::new("make-default")
+            .label(label)
+            .small()
+            .outline()
+            .on_click(|_, window, cx| {
+                let note = match default_app::make_default(cx) {
+                    Ok(default_app::Outcome::Done) => {
+                        Notification::success("Malgel now opens Markdown files.")
+                    }
+                    Ok(default_app::Outcome::SettingsOpened) => {
+                        Notification::info("In Settings, set Malgel as the default for .md files.")
+                    }
+                    Err(message) => Notification::error(message),
+                };
+                window.push_notification(note, cx);
+                window.refresh();
+            })
+            .into_any_element()
+    };
+    h_flex()
+        .gap_4()
+        .py_2()
+        .justify_between()
+        .child(
+            v_flex()
+                .gap_0p5()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child("Default app for Markdown"),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(description),
+                ),
+        )
+        .child(action)
 }
 
 /// Show the version and a one-line description of Malgel.
