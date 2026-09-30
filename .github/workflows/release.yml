@@ -289,22 +289,6 @@ jobs:
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item target/x86_64-pc-windows-msvc/release/malgel.exe dist/Malgel.exe
 
-      - name: Check the signing secrets
-        env:
-          CERTIFICATE_SET: ${{ secrets.APPLE_CERTIFICATE != '' }}
-          PASSWORD_SET: ${{ secrets.APPLE_CERTIFICATE_PASSWORD != '' }}
-          IDENTITY_SET: ${{ secrets.APPLE_SIGNING_IDENTITY != '' }}
-        run: |
-          # Report which secrets arrived without printing any of them; a
-          # secret that exists but is empty looks the same as a missing one.
-          echo "APPLE_CERTIFICATE set: $CERTIFICATE_SET"
-          echo "APPLE_CERTIFICATE_PASSWORD set: $PASSWORD_SET (may be empty for a certificate with a blank password)"
-          echo "APPLE_SIGNING_IDENTITY set: $IDENTITY_SET"
-          echo "Notarization credentials set: $HAS_NOTARY"
-          if [[ "$HAS_SIGNING" != true ]]; then
-            echo "::warning::Signing is off: APPLE_CERTIFICATE and APPLE_SIGNING_IDENTITY must both be non-empty"
-          fi
-
       - name: Import the signing certificate
         if: env.HAS_SIGNING == 'true'
         env:
