@@ -2,7 +2,8 @@
 #
 # Pushing a tag vX.Y.Z (matching the version in Cargo.toml) publishes a
 # GitHub Release with every package. Running the workflow by hand puts them
-# all on a draft release named for the run ("test build") instead. The macOS
+# all on a release named for the run ("test build") instead: a draft, or a
+# pre-release when the run's "prerelease" box is ticked. The macOS
 # job attaches its disk image to the draft itself rather than handing it
 # over as an artifact, so it doesn't depend on GitHub-hosted runners or
 # Actions artifact storage. Code signing and notarization happen
@@ -15,6 +16,11 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      prerelease:
+        description: Publish the test build as a pre-release instead of leaving it a draft
+        type: boolean
+        default: false
 
 concurrency:
   group: release-${{ github.ref }}
@@ -395,7 +401,8 @@ jobs:
           if-no-files-found: error
 
   # Collects every package on the draft release the macOS job started: a
-  # tag push publishes it, a manual run leaves the test build as a draft.
+  # tag push publishes it; a manual run leaves the test build a draft or,
+  # when asked, publishes it as a pre-release.
   release:
     needs: [version, macos, windows, linux]
     runs-on: ubuntu-24.04
@@ -419,6 +426,12 @@ jobs:
         run: sha256sum -- * | tee SHA256SUMS.txt
       - name: Attach the packages
         run: gh release upload "$TAG" dist/* --clobber
+      - name: Publish the test build as a pre-release
+        if: github.event_name == 'workflow_dispatch' && inputs.prerelease
+        run: |
+          gh release edit "$TAG" --draft=false --prerelease \
+            --title "Malgel ${{ needs.version.outputs.version }} test build ${{ github.run_number }}" \
+            --notes "A test build of Malgel ${{ needs.version.outputs.version }} from $GITHUB_SHA, not a finished release. The macOS app is signed and notarized; the Windows files are unsigned, so Windows may warn before running them."
       - name: Publish the release
         if: github.event_name == 'push'
         run: |

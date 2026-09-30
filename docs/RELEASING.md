@@ -16,7 +16,10 @@ A tag push publishes a GitHub Release with all of these, a
 manual run puts the same files on a draft release titled
 "Malgel <version> test build <run number>" instead (under Releases, visible
 only to people who can push to the repository; delete it when you're
-done). Drafts never create a tag.
+done). Drafts never create a tag. Tick **Publish the test build as a
+pre-release** when starting the run to publish it for anyone to download,
+marked as a pre-release (never "Latest") with the tag
+`v<version>-build.<run number>`.
 
 The macOS job attaches its disk image to the draft release itself rather
 than passing it on as an artifact, so it still delivers a signed build
