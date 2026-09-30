@@ -117,6 +117,10 @@ runner label it gives you, e.g. `getmac`. The runner needs Xcode's
 command-line tools (`codesign`, `xcrun notarytool`, `iconutil`, `lipo`) and
 `hdiutil`; Rust is installed by the workflow.
 
+CI builds on macOS only when it's run by hand (**Actions → CI → Run
+workflow**), so pushes don't spend macOS runner minutes; the release
+workflow always builds on macOS.
+
 ### Windows
 
 The certificate must be exportable as a `.pfx` with its private key.

@@ -164,7 +164,8 @@ cargo run --release -- notes.md     # opens a file
 ```
 
 GPUI Kit supports macOS, Linux (Wayland and X11) and Windows. CI builds and
-tests Malgel on all three; it has been exercised mostly on Linux.
+tests Malgel on Linux and Windows on every push, and on macOS when run by
+hand; it has been exercised mostly on Linux.
 
 `packaging/` holds the app icon and the macOS, Windows and Linux packaging.
 Pushing a `v*` tag builds the installable packages and publishes a release;

@@ -3,6 +3,8 @@ name: CI
 on:
   push:
   pull_request:
+  # Running CI by hand (Actions → CI → Run workflow) also builds on macOS.
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -31,19 +33,25 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
 
-  build:
-    name: build (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        # Set the repository variable MACOS_RUNNER to build on another macOS
-        # runner, such as GetMac's; GitHub's macOS 14 runner otherwise.
-        os: ["${{ vars.MACOS_RUNNER || 'macos-14' }}", windows-latest]
-    runs-on: ${{ matrix.os }}
+  windows:
+    runs-on: windows-latest
     env:
       # aws-lc-sys (TLS for remote images) needs NASM on x86_64 Windows
-      # unless it may use its prebuilt objects. Other targets ignore this.
+      # unless it may use its prebuilt objects.
       AWS_LC_SYS_PREBUILT_NASM: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked
+      - run: cargo test --locked
+
+  macos:
+    # Only when CI is run by hand, as macOS runners are billed by the
+    # minute. The repository variable MACOS_RUNNER picks another macOS
+    # runner, such as GetMac's; GitHub's macOS 14 runner otherwise.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ${{ vars.MACOS_RUNNER || 'macos-14' }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
