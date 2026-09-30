@@ -99,6 +99,17 @@ rejected) and staples the tickets, so Gatekeeper accepts Malgel even
 offline. The keychain is deleted at the end of the job, whatever the
 outcome.
 
+### Other macOS runners
+
+The macOS jobs in both CI and the release workflow run on GitHub's
+`macos-14` runner unless the repository variable `MACOS_RUNNER` names
+another (**Settings → Secrets and variables → Actions → Variables**). For
+a third-party service such as [GetMac](https://getmac.io/github-runners),
+install its GitHub App for this repository and set `MACOS_RUNNER` to the
+runner label it gives you, e.g. `getmac`. The runner needs Xcode's
+command-line tools (`codesign`, `xcrun notarytool`, `iconutil`, `lipo`) and
+`hdiutil`; Rust is installed by the workflow.
+
 ### Windows
 
 The certificate must be exportable as a `.pfx` with its private key.

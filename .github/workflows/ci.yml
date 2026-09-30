@@ -36,7 +36,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, windows-latest]
+        # Set the repository variable MACOS_RUNNER to build on another macOS
+        # runner, such as GetMac's; GitHub's macOS 14 runner otherwise.
+        os: ["${{ vars.MACOS_RUNNER || 'macos-14' }}", windows-latest]
     runs-on: ${{ matrix.os }}
     env:
       # aws-lc-sys (TLS for remote images) needs NASM on x86_64 Windows
