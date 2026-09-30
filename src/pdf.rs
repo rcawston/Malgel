@@ -14,6 +14,7 @@ use typst::foundations::Bytes;
 
 use crate::{
     analysis::preview_parse_options,
+    diagram::{self, DiagramTheme},
     images,
     preview_ext::{AlertKind, display_math_source, is_inline_math, parse_alert},
     typst_world::{self, VirtualFiles, escape_markup, string_literal},
@@ -131,6 +132,10 @@ const PREAMBLE: &str = r##"#set document(title: {title})
   } else {
     image(path, alt: alt)
   }
+}
+#let malgel-diagram(path, width) = context {
+  let available = page.width - page.margin.left - page.margin.right
+  align(center, image(path, width: calc.min(width, available), alt: "Diagram"))
 }
 #let malgel-meta(pairs) = block(width: 100%, below: 1.4em, table(columns: (auto, 1fr), stroke: none, fill: none, inset: (x: 0pt, y: 2pt), column-gutter: 1.2em, ..pairs.map(((k, v)) => (text(fill: luma(100), k), v)).flatten()))
 "##;
@@ -281,6 +286,9 @@ impl Writer<'_> {
                 } else {
                     format!("#list(tight: {tight}, {items})")
                 }
+            }
+            Node::Code(code) if diagram::is_mermaid(code.lang.as_deref()) => {
+                self.diagram(&code.value)
             }
             Node::Code(code) => match code.lang.as_deref() {
                 Some(lang) if !lang.is_empty() => format!(
@@ -460,6 +468,31 @@ impl Writer<'_> {
             label
         };
         format!("#link({})[{label}]", string_literal(url))
+    }
+
+    /// A Mermaid diagram as vector art, or its source with the reason when
+    /// it can't be drawn.
+    fn diagram(&mut self, source: &str) -> String {
+        self.images += 1;
+        let id = format!("mermaid-{}", self.images);
+        match diagram::render(source, &DiagramTheme::document(), &id) {
+            Ok(diagram) => {
+                let name = format!("diagram-{}.svg", self.images);
+                self.files
+                    .insert(name.clone(), Bytes::new(diagram.svg.into_bytes()));
+                // CSS pixels, as the diagram was laid out in, to points.
+                format!(
+                    "#malgel-diagram({}, {:.1}pt)",
+                    string_literal(&format!("/{name}")),
+                    diagram.width * 0.75
+                )
+            }
+            Err(error) => format!(
+                "#raw(block: true, {})\n#text(size: 0.85em, fill: rgb(\"#d1242f\"), {})",
+                string_literal(source.trim_end()),
+                string_literal(&error)
+            ),
+        }
     }
 
     /// Embed the image at `url`, returning its virtual path.
@@ -643,6 +676,18 @@ $$\frac{1}{$$
         assert!(markup.contains("#emph[missing]"));
         // The alert icon is the only embedded file.
         assert_eq!(files.len(), 1);
+    }
+
+    #[test]
+    fn draws_mermaid_diagrams() {
+        let source = "```mermaid\nflowchart LR\n  A[Start] --> B[End]\n```\n\n```mermaid\nflowchart LR\n  A -->\n```\n";
+        let (markup, files) = to_typst(source, "t", None, Paper::A4);
+        assert_eq!(markup.matches("#malgel-diagram(").count(), 1);
+        assert!(files.keys().any(|name| name.starts_with("diagram-")));
+        // The broken one shows its source.
+        assert!(markup.contains("A -->"));
+        let pdf = to_pdf(source, "t", None, Paper::A4);
+        assert!(pdf.is_ok(), "{pdf:?}");
     }
 
     #[test]

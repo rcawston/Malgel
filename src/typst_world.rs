@@ -189,7 +189,8 @@ pub fn rasterize(page: &typst_layout::Page, pixels_per_point: f32) -> Result<Vec
 }
 
 /// Rasterize an SVG image (for formats that only take bitmaps), returning
-/// the PNG and the image's size in points.
+/// the PNG and the image's size in points. Text in the SVG may use any
+/// installed font.
 pub fn svg_to_png(svg: Vec<u8>, pixels_per_point: f32) -> Result<(Vec<u8>, f32, f32), String> {
     let mut files = VirtualFiles::new();
     files.insert("image.svg".into(), Bytes::new(svg));
@@ -197,7 +198,7 @@ pub fn svg_to_png(svg: Vec<u8>, pixels_per_point: f32) -> Result<(Vec<u8>, f32, 
         "#set page(width: auto, height: auto, margin: 0pt, fill: none)\n#image(\"/image.svg\")\n"
             .into(),
         files,
-        &BUNDLED_FONTS,
+        &DOCUMENT_FONTS,
     )?;
     let page = document
         .pages()

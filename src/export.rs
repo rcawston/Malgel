@@ -10,12 +10,14 @@ use markdown::{CompileOptions, Options, mdast::Node};
 
 use crate::{
     analysis::{content_hash, preview_parse_options},
+    diagram::{self, DiagramTheme},
     images,
     math::{self, MathStyle},
     preview_ext::{
         AlertKind, DISPLAY_MATH_SCALE, INLINE_MATH_SCALE, display_math_source, is_inline_math,
         parse_alert,
     },
+    typst_world,
 };
 
 /// Font size formulas are laid out for; the page sizes them in `em`, so they
@@ -68,6 +70,9 @@ input[type=checkbox] { margin-right: .4em; }
 .math svg { display: inline-block; overflow: visible; }
 .math-display { margin: 0 0 1em; text-align: center; overflow-x: auto; overflow-y: hidden; }
 .math-error { color: var(--caution); }
+.diagram { margin: 0 0 1em; text-align: center; overflow-x: auto; }
+.diagram svg { max-width: 100%; height: auto; border-radius: 8px; }
+.diagram-error { border-color: var(--caution); }
 .alert {
   --c: var(--note);
   margin: 0 0 1em; padding: .75em 1em; border-radius: 8px;
@@ -211,6 +216,8 @@ struct Replacement {
 struct Exporter {
     /// Numbers the formulas, so their SVG ids stay unique in the page.
     formulas: usize,
+    /// Numbers the diagrams, for the same reason.
+    diagrams: usize,
     /// Rendering for the clipboard rather than a page.
     clipboard: bool,
 }
@@ -271,6 +278,14 @@ impl Exporter {
         let text = &source[range.clone()];
 
         match node {
+            Node::Code(code) if diagram::is_mermaid(code.lang.as_deref()) => {
+                let html = self.diagram(&code.value);
+                out.push(Replacement {
+                    range,
+                    block: true,
+                    html,
+                });
+            }
             Node::Code(_) | Node::InlineCode(_) | Node::Html(_) | Node::Yaml(_) => {}
             Node::Blockquote(_) => match parse_alert(text) {
                 Some((kind, body)) => {
@@ -354,6 +369,31 @@ impl Exporter {
         )
     }
 
+    /// A Mermaid diagram: inline SVG on a page, a PNG on the clipboard, and
+    /// its source with the reason when it can't be drawn.
+    fn diagram(&mut self, source: &str) -> String {
+        self.diagrams += 1;
+        let id = format!("mermaid-{}", self.diagrams);
+        let rendered = diagram::render(source, &DiagramTheme::document(), &id);
+        match rendered {
+            Ok(diagram) if self.clipboard => {
+                let width = diagram.width;
+                match typst_world::svg_to_png(diagram.svg.into_bytes(), 2.) {
+                    Ok((png, _, _)) => format!(
+                        "<p style=\"margin:0 0 1em;text-align:center\"><img src=\"{}\" alt=\"Diagram\" style=\"width:{width:.0}px;max-width:100%\"></p>\n",
+                        data_url(&png, "png")
+                    ),
+                    Err(error) => diagram_error(source, &error),
+                }
+            }
+            Ok(diagram) => format!(
+                "<figure class=\"diagram\" role=\"img\" aria-label=\"Diagram\">{}</figure>\n",
+                diagram.svg
+            ),
+            Err(error) => diagram_error(source, &error),
+        }
+    }
+
     fn formula(&mut self, tex: &str, style: MathStyle) -> String {
         let (scale, element, class) = match style {
             MathStyle::Inline => (INLINE_MATH_SCALE, "span", "math math-inline"),
@@ -386,6 +426,15 @@ impl Exporter {
             },
         }
     }
+}
+
+/// A diagram's source, shown when it can't be drawn.
+fn diagram_error(source: &str, error: &str) -> String {
+    format!(
+        "<pre class=\"diagram-error\" title=\"{}\"><code>{}</code></pre>\n",
+        escape(error),
+        escape(source.trim_end())
+    )
 }
 
 /// A formula as a PNG image, sized in pixels and dropped to the baseline, as
@@ -568,6 +617,21 @@ mod tests {
         assert!(html.contains("src=\"https://x.dev/r.png\""));
         assert!(!html.contains('\u{0}'));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn renders_mermaid_diagrams() {
+        let source = "```mermaid\nflowchart LR\n  A[Start] --> B[End]\n```\n\n```mermaid\nsequenceDiagram\n  A->>B: hi\n```\n\n```mermaid\nflowchart LR\n  A -->\n```\n";
+        let html = to_html(source, "t");
+        assert_eq!(html.matches("<figure class=\"diagram\"").count(), 2);
+        assert!(html.contains("id=\"mermaid-1\"") && html.contains("id=\"mermaid-2\""));
+        assert!(html.contains(">Start<") || html.contains("Start</tspan>"));
+        assert!(html.contains("class=\"diagram-error\""));
+        assert!(!html.contains("language-mermaid"));
+
+        let clip = to_clipboard_html(source, None);
+        assert_eq!(clip.matches("<img src=\"data:image/png;base64,").count(), 2);
+        assert!(!clip.contains("<svg"));
     }
 
     #[test]

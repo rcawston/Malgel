@@ -1,4 +1,5 @@
-//! Preview extensions beyond CommonMark and GFM: GitHub alerts and math.
+//! Preview extensions beyond CommonMark and GFM: GitHub alerts, math and
+//! Mermaid diagrams.
 
 use std::{
     collections::HashMap,
@@ -26,12 +27,14 @@ use gpui_kit::{
 
 use crate::{
     analysis::content_hash,
+    diagram::{self, DiagramTheme},
     math::{self, MathStyle},
 };
 
 /// The parser configuration and plugins the preview renders with.
 pub fn markdown_extensions(preview: &gpui_kit::Entity<TextViewState>) -> MarkdownExtensions {
     let cache = MathCache::new(preview);
+    let diagrams = DiagramCache::new(preview);
     let with_math = |extensions: MarkdownExtensions| {
         extensions
             .plugin(BlockMathPlugin {
@@ -39,6 +42,9 @@ pub fn markdown_extensions(preview: &gpui_kit::Entity<TextViewState>) -> Markdow
             })
             .plugin(InlineMathPlugin {
                 cache: cache.clone(),
+            })
+            .plugin(MermaidPlugin {
+                cache: diagrams.clone(),
             })
     };
     // Alert bodies are rendered by their own nested view, which needs math too.
@@ -475,6 +481,236 @@ impl MarkdownPlugin for InlineMathPlugin {
     }
 }
 
+// -------------------------------------------------------------------------
+// Mermaid diagrams
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MermaidSource(String);
+
+/// A rendered diagram ready to paint.
+struct PreparedDiagram {
+    image: Arc<Image>,
+    width: f32,
+    height: f32,
+}
+
+enum DiagramEntry {
+    Pending,
+    Ready(Arc<PreparedDiagram>),
+    Failed(SharedString),
+}
+
+enum DiagramLookup {
+    Ready(Arc<PreparedDiagram>),
+    Waiting,
+    Failed(SharedString),
+}
+
+/// Diagrams kept before the cache starts over.
+const DIAGRAM_CACHE_LIMIT: usize = 128;
+/// Diagrams are laid out for this text size and scaled with the preview's.
+const DIAGRAM_FONT_SIZE: f32 = 16.;
+
+/// Diagrams rendered for the preview, keyed by source and theme, rendered
+/// on a background thread like formulas.
+#[derive(Clone)]
+struct DiagramCache {
+    entries: Arc<Mutex<HashMap<(u64, u64), DiagramEntry>>>,
+    preview: WeakEntity<TextViewState>,
+}
+
+impl DiagramCache {
+    fn new(preview: &gpui_kit::Entity<TextViewState>) -> Self {
+        Self {
+            entries: Arc::default(),
+            preview: preview.downgrade(),
+        }
+    }
+
+    fn get(&self, source: &str, theme: DiagramTheme, cx: &mut App) -> DiagramLookup {
+        let key = (content_hash(source), content_hash(&format!("{theme:?}")));
+        let mut entries = self.entries.lock().expect("diagram cache poisoned");
+        match entries.get(&key) {
+            Some(DiagramEntry::Ready(diagram)) => return DiagramLookup::Ready(diagram.clone()),
+            Some(DiagramEntry::Pending) => return DiagramLookup::Waiting,
+            Some(DiagramEntry::Failed(error)) => return DiagramLookup::Failed(error.clone()),
+            None => {}
+        }
+        if entries.len() >= DIAGRAM_CACHE_LIMIT {
+            entries.retain(|_, entry| matches!(entry, DiagramEntry::Pending));
+        }
+        entries.insert(key, DiagramEntry::Pending);
+        drop(entries);
+
+        let source = source.to_string();
+        let id = format!("mermaid-{:x}", key.0);
+        let task = cx
+            .background_executor()
+            .spawn(async move { diagram::render(&source, &theme, &id) });
+        let cache = self.clone();
+        cx.spawn(async move |cx| {
+            let entry = match task.await {
+                Ok(diagram) => DiagramEntry::Ready(Arc::new(PreparedDiagram {
+                    image: Arc::new(Image::from_bytes(
+                        ImageFormat::Svg,
+                        diagram.svg.into_bytes(),
+                    )),
+                    width: diagram.width,
+                    height: diagram.height,
+                })),
+                Err(error) => DiagramEntry::Failed(error.into()),
+            };
+            cache
+                .entries
+                .lock()
+                .expect("diagram cache poisoned")
+                .insert(key, entry);
+            _ = cache
+                .preview
+                .update(cx, |preview, cx| preview.invalidate_inline_layout(cx));
+        })
+        .detach();
+        DiagramLookup::Waiting
+    }
+}
+
+/// `color` as `#rrggbb`, composited over `background` when translucent.
+fn hex_over(color: Hsla, background: Hsla) -> String {
+    let (fg, bg) = (Rgba::from(color), Rgba::from(background));
+    let mix = |f: f32, b: f32| ((f * fg.a + b * (1. - fg.a)).clamp(0., 1.) * 255.).round() as u8;
+    format!(
+        "#{:02x}{:02x}{:02x}",
+        mix(fg.r, bg.r),
+        mix(fg.g, bg.g),
+        mix(fg.b, bg.b)
+    )
+}
+
+/// The diagram colors that match the app's theme.
+fn diagram_theme(cx: &App) -> DiagramTheme {
+    let theme = cx.theme();
+    let background = theme.background;
+    let hex = |color: Hsla| hex_over(color, background);
+    // Shades are tints of the text color over the background, so every
+    // theme gets light fills and clear outlines, whatever its own
+    // secondary colors are tuned for.
+    let tint = |amount: f32| hex(theme.foreground.opacity(amount));
+    DiagramTheme {
+        dark: theme.is_dark(),
+        canvas: hex(background),
+        surface: tint(0.045),
+        surface_alt: tint(0.09),
+        text: hex(theme.foreground),
+        subtle_text: hex(theme.muted_foreground),
+        border: tint(0.35),
+        line: tint(0.55),
+        note_background: hex(theme.warning.opacity(0.16)),
+        note_border: hex(theme.warning.opacity(0.7)),
+        error: hex(theme.danger),
+        warning: hex(theme.warning),
+        success: hex(theme.success),
+        // Distinct hues (themes' chart colors are often shades of one),
+        // softened toward the background.
+        series: [
+            theme.blue,
+            theme.green,
+            theme.yellow,
+            theme.red,
+            theme.magenta,
+            theme.cyan,
+        ]
+        .map(|color| hex(color.opacity(0.75)))
+        .to_vec(),
+        background: hex(background),
+    }
+}
+
+/// Fenced code blocks marked `mermaid` render as diagrams.
+struct MermaidPlugin {
+    cache: DiagramCache,
+}
+
+impl MarkdownPlugin for MermaidPlugin {
+    fn is_block(&self) -> bool {
+        true
+    }
+
+    fn name(&self) -> &str {
+        "mermaid"
+    }
+
+    fn parse(&self, node: &Node, cx: &MarkdownParseContext<'_>) -> Option<MarkdownNode> {
+        let Node::Code(code) = node else {
+            return None;
+        };
+        if !diagram::is_mermaid(code.lang.as_deref()) {
+            return None;
+        }
+        Some(
+            MarkdownNode::new("mermaid", MermaidSource(code.value.clone()))
+                .text(code.value.clone())
+                .accessibility_label("Mermaid diagram")
+                .markdown(cx.node_source(node).unwrap_or(&code.value).to_string()),
+        )
+    }
+
+    fn render(&self, node: &MarkdownNode, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let source = &node.data::<MermaidSource>().expect("mermaid node data").0;
+        let id = SharedString::from(format!("mermaid-{}", content_hash(source)));
+        let scale = f32::from(window.rem_size()) / DIAGRAM_FONT_SIZE;
+        let theme = diagram_theme(cx);
+
+        let content = match self.cache.get(source, theme, cx) {
+            DiagramLookup::Ready(diagram) => {
+                let width = diagram.width * scale;
+                h_flex()
+                    .w_full()
+                    .justify_center()
+                    .child(
+                        img(diagram.image.clone())
+                            .object_fit(ObjectFit::Contain)
+                            .w_full()
+                            .max_w(px(width))
+                            .aspect_ratio(diagram.width / diagram.height),
+                    )
+                    .into_any_element()
+            }
+            DiagramLookup::Waiting => div()
+                .h(px(48.))
+                .w_full()
+                .rounded(cx.theme().radius)
+                .bg(cx.theme().muted.opacity(0.5))
+                .into_any_element(),
+            DiagramLookup::Failed(error) => v_flex()
+                .w_full()
+                .gap_2()
+                .p_3()
+                .rounded(cx.theme().radius)
+                .border_1()
+                .border_color(cx.theme().danger.opacity(0.4))
+                .bg(cx.theme().danger.opacity(0.05))
+                .child(
+                    h_flex()
+                        .items_start()
+                        .gap_2()
+                        .text_sm()
+                        .text_color(cx.theme().danger)
+                        .child(Icon::new(IconName::TriangleAlert).small().mt_0p5())
+                        .child(div().flex_1().min_w_0().child(error)),
+                )
+                .child(
+                    div()
+                        .font_family(cx.theme().mono_font_family.clone())
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(source.trim_end().to_string()),
+                )
+                .into_any_element(),
+        };
+        div().id(id).w_full().py_2().child(content)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -503,5 +739,14 @@ mod tests {
         assert!(!is_inline_math("x", Some('0')));
         assert_eq!(display_math_source("$$ a + b $$"), Some("a + b"));
         assert_eq!(display_math_source("$$ $$"), None);
+    }
+
+    #[test]
+    fn composites_translucent_colors() {
+        let white: Hsla = gpui_kit::rgb(0xffffff).into();
+        let black: Hsla = gpui_kit::rgb(0x000000).into();
+        assert_eq!(hex_over(black, white), "#000000");
+        assert_eq!(hex_over(black.opacity(0.5), white), "#808080");
+        assert_eq!(hex_over(gpui_kit::rgb(0x0969da).into(), black), "#0969da");
     }
 }

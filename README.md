@@ -27,6 +27,13 @@ A fast, native Markdown editor and previewer written in pure Rust with
   Typst compiler with its bundled New Computer Modern Math font. Formulas sit
   on the text baseline, follow the theme's text color, render on a background
   thread and are cached. Prices like "$5 and $10" stay text.
+- **Mermaid diagrams.** A code block fenced as `mermaid` becomes a diagram —
+  flowcharts, sequence, class, state and ER diagrams, Gantt charts, pies,
+  mindmaps, git graphs, timelines, journeys and more — drawn in pure Rust by
+  [merman](https://github.com/Latias94/merman), with no browser or
+  JavaScript. Diagrams take their colors from the current theme, render in
+  the background in a few milliseconds, and a mistake shows the parser's
+  message under the source instead of a blank.
 - **Formatting commands.** Bold, italic, strikethrough, inline code, links,
   headings, quotes, bulleted/numbered/task lists and code blocks — each
   toggles, and works on the selection or the word under the caret.
@@ -52,19 +59,19 @@ A fast, native Markdown editor and previewer written in pure Rust with
   version to keep; a file moved or deleted underneath you stays open as
   unsaved. The last session — documents, caret positions, folder and window
   — reopens on launch.
-- **Export as HTML, PDF and Word.** All three render alerts and math as the
-  preview does, embed local images, and work offline.
+- **Export as HTML, PDF and Word.** All three render alerts, math and
+  diagrams as the preview does, embed local images, and work offline.
   - *HTML*: a standalone, self-styled page that follows the reader's
-    light/dark preference, with formulas embedded as SVG. Raw HTML in the
-    source is escaped.
+    light/dark preference, with formulas and diagrams embedded as SVG. Raw
+    HTML in the source is escaped.
   - *PDF*: typeset by the Typst compiler, in-process: Libertinus Serif body
-    text, vector math, footnotes, repeating table headers, and installed
+    text, vector math and diagrams, footnotes, repeating table headers, and installed
     fonts as a fallback for CJK, emoji and other scripts. Paper follows the
     system locale: US Letter where it's standard, A4 elsewhere.
   - *Word (.docx)*: real heading styles (so the navigation pane works), Word
     lists and footnotes, tables with repeating headers, code blocks and
-    alerts as shaded boxes, and formulas as high-resolution images aligned
-    to the text baseline.
+    alerts as shaded boxes, and formulas and diagrams as high-resolution
+    images (formulas aligned to the text baseline).
 - **Themes.** Light, dark or follow the system, with bundled themes (Ayu,
   Catppuccin, Everforest, Flexoki, Gruvbox, macOS Classic, Solarized,
   Tokyo Night) selectable separately for light and dark.
@@ -229,8 +236,9 @@ dictionaries and on macOS those in `~/Library/Spelling` are found too.
 | `src/docx.rs` | Word export |
 | `src/typst_world.rs` | The sandboxed Typst environment shared by math and PDF export |
 | `src/images.rs` | Resolving and loading image URLs relative to the document |
-| `src/preview_ext.rs` | Preview plugins: GitHub alerts, block and inline math |
+| `src/preview_ext.rs` | Preview plugins: GitHub alerts, block and inline math, Mermaid diagrams |
 | `src/math.rs` | LaTeX → Typst → SVG/PNG formula rendering |
+| `src/diagram.rs` | Mermaid diagrams, themed, as SVG any renderer can draw |
 | `src/menus.rs`, `src/actions.rs` | Menus, actions and key bindings |
 | `src/settings.rs`, `src/themes.rs` | Preferences and theme application |
 | `build.rs`, `packaging/` | Windows exe icon and version info; app icon, bundles and installers |
@@ -246,3 +254,5 @@ The bundled American English dictionary in `dictionaries/` is from
 [SCOWL](http://wordlist.aspell.net/) via
 [wooorm/dictionaries](https://github.com/wooorm/dictionaries); its license
 is in `dictionaries/en_US-LICENSE.txt`.
+Mermaid diagrams are drawn by [merman](https://github.com/Latias94/merman), a
+Rust implementation of [Mermaid](https://mermaid.js.org/) (both MIT).

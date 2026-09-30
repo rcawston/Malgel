@@ -27,7 +27,7 @@ fn main() {
 
 Code blocks are highlighted for most popular languages, and each one has a copy button.
 
-## Alerts and math
+## Alerts, math and diagrams
 
 > [!TIP]
 > GitHub alerts work: start a quote with `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]` or `[!CAUTION]`.
@@ -37,6 +37,13 @@ Write math with LaTeX, inline like $e^{i\pi} + 1 = 0$ or on its own line:
 $$
 \int_0^1 x^2 \, dx = \frac{1}{3}
 $$
+
+Draw diagrams with [Mermaid](https://mermaid.js.org/intro/):
+
+```mermaid
+flowchart LR
+    Write --> Preview --> Export
+```
 
 ## Tables
 

@@ -5,6 +5,7 @@
 
 mod actions;
 mod analysis;
+mod diagram;
 mod document;
 mod document_view;
 mod docx;

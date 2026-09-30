@@ -49,6 +49,8 @@ markdown = "1.0.0"
 serde = { version = "1", features = ["derive"] }
 # Display width of table cells, so wide characters line up.
 unicode-width = "0.2"
+# Mermaid diagrams, parsed, laid out and drawn in pure Rust.
+merman = { version = "=0.8.0-alpha.6", default-features = false, features = ["svg", "layout-cytoscape"] }
 # Spell checking with Hunspell dictionaries, in pure Rust.
 spellbook = "0.4"
 # Word boundaries for spell checking.
@@ -87,6 +89,8 @@ winresource = { version = "0.1.31", default-features = false }
 
 [dev-dependencies]
 gpui-kit = { version = "0.7.0", features = ["test-support"] }
+# The SVG renderer GPUI draws with, to check diagrams in tests.
+resvg = { version = "0.46", default-features = false, features = ["text"] }
 
 # Dependencies are large (GPUI, tree-sitter grammars, Typst); full debug info
 # for them makes every test binary hundreds of megabytes.

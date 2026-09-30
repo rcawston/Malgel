@@ -25,6 +25,7 @@ use markdown::mdast::{AlignKind, Node};
 
 use crate::{
     analysis::preview_parse_options,
+    diagram::{self, DiagramTheme},
     images, math,
     pdf::Paper,
     preview_ext::{AlertKind, display_math_source, is_inline_math, parse_alert},
@@ -314,6 +315,9 @@ impl Writer<'_> {
                     .collect(),
             },
             Node::List(list) => self.list(list, source, depth),
+            Node::Code(code) if diagram::is_mermaid(code.lang.as_deref()) => {
+                self.diagram(&code.value)
+            }
             Node::Code(code) => vec![code_block(&code.value)],
             Node::Math(math) => vec![self.display_math(&math.value)],
             Node::Table(table) => vec![self.table(table, source)],
@@ -678,6 +682,39 @@ impl Writer<'_> {
             },
         );
         Block::table(boxed(cell))
+    }
+
+    /// A Mermaid diagram as a picture, or its source with the reason when
+    /// it can't be drawn.
+    fn diagram(&mut self, source: &str) -> Vec<Block> {
+        let rendered =
+            diagram::render(source, &DiagramTheme::document(), "mermaid").and_then(|diagram| {
+                // CSS pixels, as the diagram was laid out in, to points.
+                let (width, height) = (diagram.width * 0.75, diagram.height * 0.75);
+                typst_world::svg_to_png(diagram.svg.into_bytes(), RASTER_DENSITY)
+                    .map(|(png, _, _)| (png, width, height))
+            });
+        match rendered {
+            Ok((png, width, height)) => {
+                let scale = (self.text_width / width).min(1.);
+                vec![Block::Paragraph(
+                    Paragraph::new()
+                        .align(AlignmentType::Center)
+                        .add_run(Run::new().add_image(picture(png, width * scale, height * scale))),
+                )]
+            }
+            Err(error) => vec![
+                code_block(source),
+                Block::Paragraph(
+                    Paragraph::new().add_run(
+                        Run::new()
+                            .add_text(error)
+                            .color("D1242F")
+                            .size(half_points(BODY_SIZE * 0.85)),
+                    ),
+                ),
+            ],
+        }
     }
 
     fn display_math(&mut self, tex: &str) -> Block {
@@ -1062,6 +1099,17 @@ mod tests {
             .read_to_string(&mut xml)
             .unwrap();
         xml
+    }
+
+    #[test]
+    fn draws_mermaid_diagrams() {
+        let source = "```mermaid\nflowchart LR\n  A[Start] --> B[End]\n```\n\n```mermaid\nflowchart LR\n  A -->\n```\n";
+        let xml = document_xml(&to_docx(source, "t", None, Paper::A4).unwrap());
+        assert_eq!(xml.matches("<w:drawing>").count(), 1);
+        assert!(
+            xml.contains("A\u{a0}--&gt;") || xml.contains("A --&gt;"),
+            "{xml}"
+        );
     }
 
     #[test]
