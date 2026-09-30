@@ -443,6 +443,10 @@ jobs:
       # The same draft the macOS job names.
       TAG: ${{ github.event_name == 'push' && github.ref_name || format('v{0}-build.{1}', needs.version.outputs.version, github.run_number) }}
     steps:
+      # Only for hand-written release notes, if the tag has any.
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/release-notes
       - uses: actions/download-artifact@v4
         with:
           pattern: malgel-*
@@ -464,7 +468,13 @@ jobs:
       - name: Publish the release
         if: github.event_name == 'push'
         run: |
-          notes="$(gh api "repos/$GH_REPO/releases/generate-notes" -f tag_name="$TAG" --jq .body)"
+          # Notes written for this version, else GitHub's list of changes.
+          notes_file=".github/release-notes/$TAG.md"
+          if [[ -f "$notes_file" ]]; then
+            notes="$(cat "$notes_file")"
+          else
+            notes="$(gh api "repos/$GH_REPO/releases/generate-notes" -f tag_name="$TAG" --jq .body)"
+          fi
           prerelease=false
           if [[ "$TAG" == *-* ]]; then prerelease=true; fi
           gh release edit "$TAG" --draft=false --prerelease="$prerelease" \

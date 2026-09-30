@@ -31,7 +31,10 @@ when GitHub-hosted runners or Actions artifact storage are unavailable.
    picks it up.
 2. Add a `<release version="X.Y.Z" date="YYYY-MM-DD"/>` line at the top of
    `<releases>` in `packaging/linux/dev.malgel.Malgel.metainfo.xml`.
-3. Commit, tag and push:
+3. Optionally write the release notes in `.github/release-notes/vX.Y.Z.md`;
+   without that file the release lists the changes GitHub finds since the
+   previous release.
+4. Commit, tag and push:
 
    ```sh
    git commit -am "Release X.Y.Z"
