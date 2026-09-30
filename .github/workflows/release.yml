@@ -6,10 +6,10 @@
 # pre-release when the run's "prerelease" box is ticked. The macOS
 # job attaches its disk image to the draft itself rather than handing it
 # over as an artifact, so it doesn't depend on GitHub-hosted runners or
-# Actions artifact storage. Code signing and notarization happen
-# when the repository secrets described in docs/RELEASING.md are set;
-# without them the macOS app is signed ad hoc and the Windows files are
-# unsigned.
+# Actions artifact storage. Code signing and notarization happen when the
+# repository secrets (macOS) and variables (Windows, Azure Artifact Signing)
+# described in docs/RELEASING.md are set; without them the macOS app is
+# signed ad hoc and the Windows files are unsigned.
 name: Release
 
 on:
@@ -272,9 +272,15 @@ jobs:
     needs: version
     runs-on: windows-latest
     timeout-minutes: 120
+    permissions:
+      contents: read
+      # Signs in to Azure with GitHub's OIDC token rather than a stored secret.
+      id-token: write
     env:
       VERSION: ${{ needs.version.outputs.version }}
-      HAS_SIGNING: ${{ secrets.WINDOWS_CERTIFICATE != '' && secrets.WINDOWS_CERTIFICATE_PASSWORD != '' }}
+      # Signing with Azure Artifact Signing (formerly Trusted Signing) when
+      # the repository variables in docs/RELEASING.md are set.
+      HAS_SIGNING: ${{ vars.AZURE_CLIENT_ID != '' && vars.AZURE_TENANT_ID != '' && vars.AZURE_SUBSCRIPTION_ID != '' && vars.ARTIFACT_SIGNING_ENDPOINT != '' && vars.ARTIFACT_SIGNING_ACCOUNT != '' && vars.ARTIFACT_SIGNING_PROFILE != '' }}
       # aws-lc-sys (TLS for remote images) needs NASM on x86_64 Windows
       # unless it may use its prebuilt objects.
       AWS_LC_SYS_PREBUILT_NASM: "1"
@@ -300,26 +306,29 @@ jobs:
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item target/x86_64-pc-windows-msvc/release/malgel.exe dist/Malgel.exe
 
-      - name: Import the signing certificate
+      - name: Sign in to Azure
         if: env.HAS_SIGNING == 'true'
-        env:
-          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
-        run: |
-          $certificate = Join-Path $env:RUNNER_TEMP certificate.pfx
-          [IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE))
-          "CERTIFICATE=$certificate" >> $env:GITHUB_ENV
-          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
-            Where-Object { $_.FullName -like '*\x64\*' } |
-            Sort-Object FullName -Descending |
-            Select-Object -First 1
-          if (-not $signtool) { throw "signtool.exe not found" }
-          "SIGNTOOL=$($signtool.FullName)" >> $env:GITHUB_ENV
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Sign Malgel.exe
         if: env.HAS_SIGNING == 'true'
-        env:
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-        run: ./packaging/windows/sign.ps1 dist/Malgel.exe
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+          files: ${{ github.workspace }}\dist\Malgel.exe
+          description: Malgel
+          description-url: ${{ github.server_url }}/${{ github.repository }}
+          # Use only the Azure CLI sign-in from the step above.
+          exclude-environment-credential: true
+          exclude-workload-identity-credential: true
+          exclude-managed-identity-credential: true
+          exclude-azure-cli-credential: false
 
       - name: Create the zip
         run: |
@@ -346,13 +355,28 @@ jobs:
 
       - name: Sign the installer
         if: env.HAS_SIGNING == 'true'
-        env:
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
-        run: ./packaging/windows/sign.ps1 "dist/Malgel-$env:VERSION-windows-x64-setup.exe"
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+          files: ${{ github.workspace }}\dist\Malgel-${{ needs.version.outputs.version }}-windows-x64-setup.exe
+          description: Malgel installer
+          description-url: ${{ github.server_url }}/${{ github.repository }}
+          exclude-environment-credential: true
+          exclude-workload-identity-credential: true
+          exclude-managed-identity-credential: true
+          exclude-azure-cli-credential: false
 
-      - name: Remove the signing certificate
-        if: always() && env.CERTIFICATE != ''
-        run: Remove-Item -Force -ErrorAction SilentlyContinue $env:CERTIFICATE
+      - name: Check the signatures
+        if: env.HAS_SIGNING == 'true'
+        run: |
+          $files = @('dist/Malgel.exe', "dist/Malgel-$env:VERSION-windows-x64-setup.exe")
+          foreach ($file in $files) {
+            $signature = Get-AuthenticodeSignature $file
+            "{0}: {1}, signed by {2}" -f $file, $signature.Status, $signature.SignerCertificate.Subject
+            if ($signature.Status -ne 'Valid') { throw "$file is not validly signed" }
+          }
 
       - uses: actions/upload-artifact@v4
         with:

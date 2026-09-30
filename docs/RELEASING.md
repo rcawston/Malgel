@@ -48,11 +48,13 @@ properties and the installer all come from `Cargo.toml`.
 
 ## Code signing
 
-Signing is optional. Each platform signs when its secrets are present and
+Signing is optional. Each platform signs when its settings are present and
 falls back otherwise, so a fork or a fresh repository still produces
-working packages. Add secrets under **Settings → Secrets and variables →
-Actions → New repository secret**, or with the GitHub CLI
-(`gh secret set NAME < file`). The workflow never prints them.
+working packages. macOS signing uses secrets; add them under **Settings →
+Secrets and variables → Actions → New repository secret**, or with the
+GitHub CLI (`gh secret set NAME < file`). The workflow never prints them.
+Windows signing needs no secrets, only the repository variables described
+under [Windows](#windows).
 
 | Secret | Used for |
 | --- | --- |
@@ -65,8 +67,6 @@ Actions → New repository secret**, or with the GitHub CLI
 | `APPLE_ID` | Notarization with an Apple ID instead: its email address |
 | `APPLE_TEAM_ID` | 10-character Team ID |
 | `APPLE_APP_SPECIFIC_PASSWORD` | App-specific password for that Apple ID |
-| `WINDOWS_CERTIFICATE` | Authenticode code-signing certificate and private key: a `.pfx` file, base64-encoded |
-| `WINDOWS_CERTIFICATE_PASSWORD` | Password of that `.pfx` |
 
 ### macOS
 
@@ -125,24 +125,56 @@ workflow always builds on macOS.
 
 ### Windows
 
-The certificate must be exportable as a `.pfx` with its private key.
-Certificates issued since mid-2023 by public CAs usually live on a hardware
-token or in a cloud HSM instead and cannot be exported; those need a
-signing service (Azure Trusted Signing, DigiCert KeyLocker, SSL.com
-eSigner…), which this workflow does not set up.
+Windows files are signed with [Azure Artifact
+Signing](https://learn.microsoft.com/azure/artifact-signing/) (formerly
+Trusted Signing): Microsoft verifies the publisher's identity once and keeps
+the signing key, and GitHub Actions signs in with its own short-lived OIDC
+token, so no password or certificate is stored in the repository. One
+signing account and certificate profile can sign any number of projects.
 
-```sh
-base64 -w0 malgel.pfx                       # Linux; on macOS: base64 -i malgel.pfx
-```
+1. In the Azure portal, create an Artifact Signing account, complete
+   **identity validation** (choose *Public*), and create a certificate
+   profile of type **Public Trust**. The validated name is the publisher
+   Windows shows.
+2. Let every run of the Release workflow sign in to Azure with the same
+   identity, whether it was started by hand or by a tag. Azure matches that
+   identity exactly, and GitHub's default one includes the branch or tag,
+   so change it once for the repository to name the workflow instead:
 
-```powershell
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("malgel.pfx")) | Set-Clipboard
-```
+   ```sh
+   gh api -X PUT repos/rcawston/Malgel/actions/oidc/customization/sub \
+     -F use_default=false \
+     -f 'include_claim_keys[]=repo' -f 'include_claim_keys[]=workflow'
+   ```
 
-With the certificate, `Malgel.exe` (before it goes into the zip and the
-installer) and the installer are signed with SHA-256 and timestamped by
-DigiCert's RFC 3161 server, then verified. A self-signed test certificate
-fails that verification; use one that chains to a trusted root.
+   Runs of the Release workflow then identify as
+   `repo:rcawston/Malgel:workflow:Release`.
+3. In Microsoft Entra ID, create an **app registration**, and under
+   *Certificates & secrets → Federated credentials* add a credential with
+   the scenario **Other issuer**: issuer
+   `https://token.actions.githubusercontent.com`, subject
+   `repo:rcawston/Malgel:workflow:Release`, audience
+   `api://AzureADTokenExchange`. Other projects can reuse the app with a
+   credential of their own.
+4. On the signing account's **Access control (IAM)** page, assign that app
+   the **Artifact Signing Certificate Profile Signer** role.
+5. Add these as repository **variables** (Settings → Secrets and variables
+   → Actions → Variables); none of them is secret:
+
+| Variable | Value |
+| --- | --- |
+| `AZURE_TENANT_ID` | Directory (tenant) ID |
+| `AZURE_CLIENT_ID` | The app registration's application (client) ID |
+| `AZURE_SUBSCRIPTION_ID` | Subscription holding the signing account |
+| `ARTIFACT_SIGNING_ENDPOINT` | The account's endpoint, e.g. `https://eus.codesigning.azure.net/` |
+| `ARTIFACT_SIGNING_ACCOUNT` | The signing account's name |
+| `ARTIFACT_SIGNING_PROFILE` | The certificate profile's name |
+
+With them set, `Malgel.exe` (before it goes into the zip and the installer)
+and the installer are signed with SHA-256, timestamped by Microsoft, and
+checked. SmartScreen still warns about a new publisher until downloads
+build up its reputation; signing makes that happen and names you as the
+publisher rather than "Unknown publisher".
 
 ### Without secrets
 
@@ -175,7 +207,7 @@ fails that verification; use one that chains to a trusted root.
   default (all users on request), adds a Start menu entry, registers
   Malgel under "Open with" for `.md`, `.markdown`, `.mdown`, `.mkd` and
   `.txt`, and lists it in Default Apps without changing any existing
-  default. `packaging/windows/sign.ps1` does the signing.
+  default.
 - **Linux.** `packaging/linux/package.sh` installs the binary, desktop
   entry, AppStream metadata and icons into a prefix and archives it; the
   tarball can be unpacked straight into `~/.local`. With `LINUXDEPLOY`
