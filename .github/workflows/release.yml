@@ -159,10 +159,11 @@ jobs:
 
       - name: Build a universal binary
         run: |
-          # One cargo run for both, so build scripts and proc macros are
-          # compiled once and the two builds share every core.
-          cargo build --release --locked \
-            --target aarch64-apple-darwin --target x86_64-apple-darwin
+          # One after the other: building both in a single cargo run was
+          # slower (26 minutes against 17), as the two link-time-optimized
+          # builds compete for the runner's memory.
+          cargo build --release --locked --target aarch64-apple-darwin
+          cargo build --release --locked --target x86_64-apple-darwin
           mkdir -p dist
           lipo -create -output dist/malgel \
             target/aarch64-apple-darwin/release/malgel \
