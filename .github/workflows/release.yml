@@ -1,12 +1,12 @@
 # Builds installable Malgel packages for macOS, Windows and Linux.
 #
 # Pushing a tag vX.Y.Z (matching the version in Cargo.toml) publishes a
-# GitHub Release with every package. Running the workflow by hand puts them
-# all on a release named for the run ("test build") instead: a draft, or a
-# pre-release when the run's "prerelease" box is ticked. The macOS
-# job attaches its disk image to the draft itself rather than handing it
-# over as an artifact, so it doesn't depend on GitHub-hosted runners or
-# Actions artifact storage. Code signing and notarization happen when the
+# GitHub Release with every package. Running the workflow by hand does the
+# same for the "publish" choice "release" (GitHub creates the tag), or puts
+# the packages on a test-build release instead: a draft, or a pre-release.
+# The macOS job attaches its disk image to the draft itself rather than
+# handing it over as an artifact, so it doesn't depend on GitHub-hosted
+# runners or Actions artifact storage. Code signing and notarization happen when the
 # repository secrets (macOS) and variables (Windows, Azure Artifact Signing)
 # described in docs/RELEASING.md are set; without them the macOS app is
 # signed ad hoc and the Windows files are unsigned.
@@ -17,10 +17,11 @@ on:
     tags: ["v*"]
   workflow_dispatch:
     inputs:
-      prerelease:
-        description: Publish the test build as a pre-release instead of leaving it a draft
-        type: boolean
-        default: false
+      publish:
+        description: "What to publish: a private test build (draft), a public test build (prerelease), or the real release of the version in Cargo.toml (release)"
+        type: choice
+        options: [draft, prerelease, release]
+        default: draft
 
 concurrency:
   group: release-${{ github.ref }}
@@ -49,6 +50,17 @@ jobs:
           fi
           echo "Version $version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Check the version isn't released yet
+        if: github.event_name == 'workflow_dispatch' && inputs.publish == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [[ "$(gh release view "v$VERSION" --json isDraft --jq .isDraft 2>/dev/null)" == false ]]; then
+            echo "::error::Malgel $VERSION is already released; bump the version in Cargo.toml first"
+            exit 1
+          fi
 
   macos:
     # The repository variable MACOS_RUNNER picks another macOS runner, such
@@ -250,6 +262,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          PUBLISH: ${{ inputs.publish }}
         run: |
           if ! command -v gh >/dev/null; then
             brew install gh
@@ -257,9 +270,16 @@ jobs:
           if [[ "$GITHUB_EVENT_NAME" == push ]]; then
             tag="$GITHUB_REF_NAME"
             title="Malgel $VERSION"
+          elif [[ "$PUBLISH" == release ]]; then
+            tag="v$VERSION"
+            title="Malgel $VERSION"
           else
             tag="v$VERSION-build.$GITHUB_RUN_NUMBER"
             title="Malgel $VERSION test build $GITHUB_RUN_NUMBER"
+          fi
+          if [[ "$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null)" == false ]]; then
+            echo "::error::$tag is already published; bump the version in Cargo.toml first"
+            exit 1
           fi
           if ! gh release view "$tag" >/dev/null 2>&1; then
             gh release create "$tag" --draft --target "$GITHUB_SHA" \
@@ -441,7 +461,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       # The same draft the macOS job names.
-      TAG: ${{ github.event_name == 'push' && github.ref_name || format('v{0}-build.{1}', needs.version.outputs.version, github.run_number) }}
+      TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.publish == 'release' && format('v{0}', needs.version.outputs.version) || format('v{0}-build.{1}', needs.version.outputs.version, github.run_number) }}
     steps:
       # Only for hand-written release notes, if the tag has any.
       - uses: actions/checkout@v4
@@ -460,20 +480,22 @@ jobs:
       - name: Attach the packages
         run: gh release upload "$TAG" dist/* --clobber
       - name: Publish the test build as a pre-release
-        if: github.event_name == 'workflow_dispatch' && inputs.prerelease
+        if: github.event_name == 'workflow_dispatch' && inputs.publish == 'prerelease'
         run: |
           gh release edit "$TAG" --draft=false --prerelease \
             --title "Malgel ${{ needs.version.outputs.version }} test build ${{ github.run_number }}" \
             --notes "A test build of Malgel ${{ needs.version.outputs.version }} from $GITHUB_SHA, not a finished release. The macOS app is signed and notarized; the Windows files are unsigned, so Windows may warn before running them."
       - name: Publish the release
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' || inputs.publish == 'release'
         run: |
           # Notes written for this version, else GitHub's list of changes.
           notes_file=".github/release-notes/$TAG.md"
           if [[ -f "$notes_file" ]]; then
             notes="$(cat "$notes_file")"
           else
-            notes="$(gh api "repos/$GH_REPO/releases/generate-notes" -f tag_name="$TAG" --jq .body)"
+            # The tag may not exist yet: publishing creates it.
+            notes="$(gh api "repos/$GH_REPO/releases/generate-notes" -f tag_name="$TAG" \
+              -f target_commitish="$GITHUB_SHA" --jq .body)"
           fi
           prerelease=false
           if [[ "$TAG" == *-* ]]; then prerelease=true; fi

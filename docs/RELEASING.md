@@ -12,14 +12,20 @@ publishing anything.
 | Linux x86_64 | `Malgel-<version>-x86_64.AppImage` and `malgel-<version>-linux-x86_64.tar.gz` | `ubuntu-22.04` |
 
 A tag push publishes a GitHub Release with all of these, a
-`SHA256SUMS.txt` and notes generated from the merged pull requests. A
-manual run puts the same files on a draft release titled
-"Malgel <version> test build <run number>" instead (under Releases, visible
-only to people who can push to the repository; delete it when you're
-done). Drafts never create a tag. Tick **Publish the test build as a
-pre-release** when starting the run to publish it for anyone to download,
-marked as a pre-release (never "Latest") with the tag
-`v<version>-build.<run number>`.
+`SHA256SUMS.txt` and the release notes. A manual run (**Actions → Release →
+Run workflow**) does what its **publish** choice says:
+
+- **draft** (the default): a test build on a draft release titled
+  "Malgel <version> test build <run number>", under Releases and visible
+  only to people who can push to the repository. Drafts never create a tag;
+  delete it when you're done.
+- **prerelease**: the same test build published for anyone to download,
+  marked as a pre-release (never "Latest") with the tag
+  `v<version>-build.<run number>`.
+- **release**: the real release of the version in `Cargo.toml`, exactly as a
+  tag push would make it. GitHub creates the tag `v<version>` on the commit
+  the run built, so nothing needs pushing but `main`. A version that is
+  already released is refused.
 
 The macOS job attaches its disk image to the draft release itself rather
 than passing it on as an artifact, so it still delivers a signed build
@@ -34,12 +40,13 @@ when GitHub-hosted runners or Actions artifact storage are unavailable.
 3. Optionally write the release notes in `.github/release-notes/vX.Y.Z.md`;
    without that file the release lists the changes GitHub finds since the
    previous release.
-4. Commit, tag and push:
+4. Commit and push, then either push a tag or run the Release workflow with
+   **publish: release**:
 
    ```sh
    git commit -am "Release X.Y.Z"
-   git tag -a vX.Y.Z -m "Malgel X.Y.Z"
-   git push origin main vX.Y.Z
+   git push origin main
+   git tag -a vX.Y.Z -m "Malgel X.Y.Z" && git push origin vX.Y.Z   # or run the workflow
    ```
 
 The tag must be `v` followed by the version in `Cargo.toml`; the workflow
