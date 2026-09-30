@@ -42,19 +42,32 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
   macos:
-    needs: version
     # The repository variable MACOS_RUNNER picks another macOS runner, such
-    # as GetMac's; GitHub's macOS 14 runner otherwise.
+    # as GetMac's; GitHub's macOS 14 runner otherwise. The job checks the
+    # version itself rather than waiting on a GitHub-hosted job, so it runs
+    # wherever its runner is available.
     runs-on: ${{ vars.MACOS_RUNNER || 'macos-14' }}
     timeout-minutes: 180
     env:
-      VERSION: ${{ needs.version.outputs.version }}
       MACOSX_DEPLOYMENT_TARGET: "11.0"
-      DMG: Malgel-${{ needs.version.outputs.version }}-macos-universal.dmg
       HAS_SIGNING: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.APPLE_SIGNING_IDENTITY != '' }}
       HAS_NOTARY: ${{ (secrets.APPLE_API_KEY != '' && secrets.APPLE_API_KEY_ID != '' && secrets.APPLE_API_ISSUER != '') || (secrets.APPLE_ID != '' && secrets.APPLE_TEAM_ID != '' && secrets.APPLE_APP_SPECIFIC_PASSWORD != '') }}
     steps:
       - uses: actions/checkout@v4
+      - name: Read the version from Cargo.toml
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+          if [[ -z "$version" ]]; then
+            echo "::error::No version found in Cargo.toml"
+            exit 1
+          fi
+          if [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match version $version in Cargo.toml"
+            exit 1
+          fi
+          echo "Version $version"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "DMG=Malgel-$version-macos-universal.dmg" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin, x86_64-apple-darwin
