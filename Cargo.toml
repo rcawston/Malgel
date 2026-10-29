@@ -1,6 +1,6 @@
 [package]
 name = "malgel"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 description = "Malgel — a fast, native Markdown editor and previewer built with GPUI Kit."
 license = "Apache-2.0"

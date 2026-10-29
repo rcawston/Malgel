@@ -26,6 +26,7 @@ use markdown::mdast::{AlignKind, Node};
 use crate::{
     analysis::preview_parse_options,
     diagram::{self, DiagramTheme},
+    html_block::{self, Align, FlowItem, Kind, Segment},
     html_inline::{self, ExportTag, Group, RawTag, Tag},
     images, math,
     pdf::Paper,
@@ -288,10 +289,56 @@ impl Writer<'_> {
     }
 
     fn blocks(&mut self, nodes: &[Node], source: &str, depth: usize) -> Vec<Block> {
-        nodes
-            .iter()
-            .flat_map(|node| self.block(node, source, depth))
+        html_block::group_blocks(nodes, source)
+            .into_iter()
+            .flat_map(|item| match item {
+                FlowItem::Node(node) => self.block(node, source, depth),
+                FlowItem::Html(segments) => self.html_block(&segments),
+            })
             .collect()
+    }
+
+    /// An HTML block: `<details>` sections printed open, aligned sections
+    /// aligned, and the text of other HTML.
+    fn html_block(&mut self, segments: &[Segment]) -> Vec<Block> {
+        let mut blocks = Vec::new();
+        for segment in segments {
+            match segment {
+                Segment::Raw(raw) => {
+                    let text = html_block::strip_tags(raw);
+                    if !text.is_empty() {
+                        blocks.push(Block::Paragraph(
+                            Paragraph::new().add_run(Run::new().add_text(text)),
+                        ));
+                    }
+                }
+                Segment::Section(section) => {
+                    if let Kind::Details { .. } = section.kind {
+                        blocks.push(Block::Paragraph(
+                            Paragraph::new().add_run(
+                                Run::new()
+                                    .add_text(section.summary.as_deref().unwrap_or("Details"))
+                                    .bold(),
+                            ),
+                        ));
+                    }
+                    let alignment = match section.kind {
+                        Kind::Align(Align::Center) => Some(AlignmentType::Center),
+                        Kind::Align(Align::Right) => Some(AlignmentType::Right),
+                        Kind::Details { .. } => None,
+                    };
+                    blocks.extend(self.document(&section.body).into_iter().map(|block| {
+                        match (block, alignment) {
+                            (Block::Paragraph(paragraph), Some(alignment)) => {
+                                Block::Paragraph(paragraph.align(alignment))
+                            }
+                            (block, _) => block,
+                        }
+                    }));
+                }
+            }
+        }
+        blocks
     }
 
     fn block(&mut self, node: &Node, source: &str, depth: usize) -> Vec<Block> {
@@ -514,6 +561,13 @@ impl Writer<'_> {
             }
             Node::Html(html) if html.value.trim().to_ascii_lowercase().starts_with("<br") => {
                 vec![Piece::Run(Run::new().add_break(BreakType::TextWrapping))]
+            }
+            Node::Html(html) if html_inline::image_tag(&html.value).is_some() => {
+                let (src, alt, width) = html_inline::image_tag(&html.value).unwrap_or_default();
+                match width {
+                    Some(width) => self.sized_image(&src, &alt, width),
+                    None => self.inline_image(&src, &alt),
+                }
             }
             // Other inline tags (`<kbd>`, `<sub>`, …) are dropped; the text
             // between them is kept.
@@ -842,6 +896,22 @@ impl Writer<'_> {
             }
             None => paragraph.add_run(missing_image(alt)),
         })
+    }
+
+    /// An image an HTML tag gives a width, in CSS pixels, at that width
+    /// (no wider than the text).
+    fn sized_image(&mut self, url: &str, alt: &str, css_width: f32) -> Vec<Piece> {
+        match self.load_image(url) {
+            Some((png, width, height)) => {
+                let scale = ((css_width * 0.75).min(self.text_width)) / width;
+                vec![Piece::Run(Run::new().add_image(picture(
+                    png,
+                    width * scale,
+                    height * scale,
+                )))]
+            }
+            None => vec![Piece::Run(missing_image(alt))],
+        }
     }
 
     fn inline_image(&mut self, url: &str, alt: &str) -> Vec<Piece> {

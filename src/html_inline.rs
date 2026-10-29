@@ -199,7 +199,7 @@ impl RawTag {
     }
 }
 
-fn decode_entities(text: &str) -> String {
+pub(crate) fn decode_entities(text: &str) -> String {
     text.replace("&quot;", "\"")
         .replace("&#39;", "'")
         .replace("&apos;", "'")
@@ -368,46 +368,34 @@ pub fn group_inlines(nodes: &[Node]) -> Vec<Group<'_>> {
     groups
 }
 
+/// An `<img>` tag (which may close itself): its address, description and
+/// width in CSS pixels, if it gives one.
+pub fn image_tag(html: &str) -> Option<(String, String, Option<f32>)> {
+    let html = html.trim();
+    let open = match html.strip_suffix("/>") {
+        Some(rest) => format!("{}>", rest.trim_end()),
+        None => html.to_string(),
+    };
+    let tag = parse_tag(&open)?;
+    if tag.name != "img" || tag.closing {
+        return None;
+    }
+    let src = tag.attribute("src")?.to_string();
+    let width = tag
+        .attribute("width")
+        .and_then(|width| width.trim().trim_end_matches("px").parse::<f32>().ok())
+        .filter(|width| *width > 0.);
+    Some((
+        src,
+        tag.attribute("alt").unwrap_or_default().to_string(),
+        width,
+    ))
+}
+
 /// The plain text of `nodes`, as a run shows it.
 pub fn plain_text(nodes: &[Node]) -> String {
     let mut run = build_run(Tag::Span, &RawTag::default(), nodes, 0);
     std::mem::take(&mut run.text)
-}
-
-/// `html`, an inline tag, rebuilt to go into an HTML document: known tags
-/// with their `title`, `class` and color, and `<br>`. Anything else is
-/// `None`, to be escaped as before.
-pub fn sanitized_tag(html: &str) -> Option<String> {
-    let trimmed = html.trim();
-    let lower = trimmed.to_ascii_lowercase();
-    if let Some(rest) = lower.strip_prefix("<br")
-        && rest.trim_start_matches([' ', '/']) == ">"
-    {
-        return Some("<br>".to_string());
-    }
-    let tag = parse_tag(trimmed)?;
-    ExportTag::from_name(&tag.name)?;
-    if tag.closing {
-        return Some(format!("</{}>", tag.name));
-    }
-    let escape = |value: &str| {
-        value
-            .replace('&', "&amp;")
-            .replace('"', "&quot;")
-            .replace('<', "&lt;")
-            .replace('>', "&gt;")
-    };
-    let mut out = format!("<{}", tag.name);
-    for name in ["title", "class"] {
-        if let Some(value) = tag.attribute(name) {
-            out.push_str(&format!(" {name}=\"{}\"", escape(value)));
-        }
-    }
-    if let Some(color) = tag.color() {
-        out.push_str(&format!(" style=\"color:#{}\"", color.document_hex()));
-    }
-    out.push('>');
-    Some(out)
 }
 
 /// A styled run: the tag, the text it wraps and that text's own formatting.
@@ -1068,22 +1056,6 @@ mod tests {
         let found = runs("<small>see [the guide](guide.md)</small>");
         assert_eq!(found[0].text, "see the guide");
         assert_eq!(found[0].links, [(4..13, "guide.md".to_string())]);
-    }
-
-    #[test]
-    fn rebuilds_tags_for_html() {
-        assert_eq!(
-            sanitized_tag(r#"<small class="detail" onclick="evil()">"#).as_deref(),
-            Some(r#"<small class="detail">"#)
-        );
-        assert_eq!(
-            sanitized_tag(r#"<span style="color:red;background:url(x)" title='a"b'>"#).as_deref(),
-            Some(r#"<span title="a&quot;b" style="color:#d1242f">"#)
-        );
-        assert_eq!(sanitized_tag("</SUP>").as_deref(), Some("</sup>"));
-        assert_eq!(sanitized_tag("<br/>").as_deref(), Some("<br>"));
-        assert_eq!(sanitized_tag("<script>"), None);
-        assert_eq!(sanitized_tag("<img src=x onerror=y>"), None);
     }
 
     #[test]

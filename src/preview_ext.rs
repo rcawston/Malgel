@@ -3,7 +3,7 @@
 
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
 };
 
 use gpui_kit::assets::IconName;
@@ -11,7 +11,7 @@ use gpui_kit::{
     App, FontWeight, Hsla, Image, ImageFormat, InteractiveElement as _, IntoElement, ObjectFit,
     ParentElement as _, Rgba, SharedString, StatefulInteractiveElement as _, Styled as _,
     StyledImage as _, WeakEntity, Window,
-    base::{TextView, TextViewState},
+    base::TextViewState,
     component::{
         ActiveTheme as _, Icon, Sizable as _,
         button::Button,
@@ -31,17 +31,30 @@ use crate::{
     actions::ViewDiagram,
     analysis::content_hash,
     diagram::{self, DiagramTheme},
+    html_block::{HtmlBlockPlugin, PreviewEnv, nested_view},
     math::{self, MathStyle},
 };
 
 /// The parser configuration and plugins the preview renders with.
-pub fn markdown_extensions(preview: &gpui_kit::Entity<TextViewState>) -> MarkdownExtensions {
+pub fn markdown_extensions(
+    preview: &gpui_kit::Entity<TextViewState>,
+    env: &Arc<PreviewEnv>,
+) -> MarkdownExtensions {
     let cache = MathCache::new(preview);
     let diagrams = DiagramCache::new(preview);
+    // The full set, for the content of `<details>` and aligned sections.
+    let full = Arc::new(OnceLock::new());
     let with_math = |extensions: MarkdownExtensions| {
         extensions
-            // First, so it sees every block before another plugin claims it.
+            // These first, so they see every block before another plugin
+            // claims it: one notes inline tags, the other hides the blocks
+            // inside an HTML section.
             .block_parser(crate::html_inline::observe_block)
+            .plugin(HtmlBlockPlugin::new(
+                env.clone(),
+                full.clone(),
+                preview.downgrade(),
+            ))
             .plugin(crate::html_inline::HtmlInlinePlugin)
             .plugin(BlockMathPlugin {
                 cache: cache.clone(),
@@ -56,13 +69,13 @@ pub fn markdown_extensions(preview: &gpui_kit::Entity<TextViewState>) -> Markdow
     // Alert bodies are rendered by their own nested view, which needs math too.
     let alert = AlertPlugin {
         body_extensions: with_math(MarkdownExtensions::default()),
+        env: env.clone(),
     };
-    with_math(
-        MarkdownExtensions::default()
-            .frontmatter()
-            .plugin(gpui_kit::component::text::FrontmatterPlugin::new())
-            .plugin(alert),
-    )
+    let extensions = with_math(MarkdownExtensions::default().frontmatter())
+        .plugin(gpui_kit::component::text::FrontmatterPlugin::new())
+        .plugin(alert);
+    _ = full.set(extensions.clone());
+    extensions
 }
 
 // -------------------------------------------------------------------------
@@ -148,6 +161,7 @@ pub fn parse_alert(blockquote_source: &str) -> Option<(AlertKind, String)> {
 
 struct AlertPlugin {
     body_extensions: MarkdownExtensions,
+    env: Arc<PreviewEnv>,
 }
 
 impl MarkdownPlugin for AlertPlugin {
@@ -201,12 +215,12 @@ impl MarkdownPlugin for AlertPlugin {
                     .child(alert.kind.title()),
             )
             .when(!alert.body.is_empty(), |this| {
-                this.child(
-                    TextView::markdown(id, alert.body.clone())
-                        .markdown_extensions(self.body_extensions.clone())
-                        .on_link_click(crate::links::on_click)
-                        .w_full(),
-                )
+                this.child(nested_view(
+                    id,
+                    alert.body.clone(),
+                    self.body_extensions.clone(),
+                    &self.env,
+                ))
             })
     }
 }

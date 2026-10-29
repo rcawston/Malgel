@@ -15,12 +15,17 @@ use typst::foundations::Bytes;
 use crate::{
     analysis::preview_parse_options,
     diagram::{self, DiagramTheme},
+    html_block::{self, Align, FlowItem, Kind, Segment},
     html_inline::{self, ExportTag, Group, RawTag, Tag},
     images,
     math::MathStyle,
     preview_ext::{AlertKind, display_math_source, is_inline_math, parse_alert},
     typst_world::{self, VirtualFiles, escape_markup, string_literal},
 };
+
+/// The widest an image sized by an HTML tag is printed, in points: the
+/// text width of the narrower paper (A4, 2.3 cm side margins).
+const MAX_IMAGE_WIDTH: f32 = 465.;
 
 /// Paper size for paged exports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -197,11 +202,40 @@ impl Writer<'_> {
     }
 
     fn blocks(&mut self, nodes: &[Node], source: &str) -> String {
-        nodes
-            .iter()
-            .filter_map(|node| self.block(node, source))
+        html_block::group_blocks(nodes, source)
+            .into_iter()
+            .filter_map(|item| match item {
+                FlowItem::Node(node) => self.block(node, source),
+                FlowItem::Html(segments) => self.html_block(&segments),
+            })
             .collect::<Vec<_>>()
             .join("\n\n")
+    }
+
+    /// An HTML block: `<details>` sections printed open, aligned sections
+    /// aligned, and the text of other HTML.
+    fn html_block(&mut self, segments: &[Segment]) -> Option<String> {
+        let parts: Vec<String> = segments
+            .iter()
+            .filter_map(|segment| match segment {
+                Segment::Raw(raw) => {
+                    let text = html_block::strip_tags(raw);
+                    (!text.is_empty()).then(|| escape_markup(&text))
+                }
+                Segment::Section(section) => {
+                    let body = self.document_fragment(&section.body);
+                    Some(match section.kind {
+                        Kind::Align(Align::Center) => format!("#align(center)[{body}]"),
+                        Kind::Align(Align::Right) => format!("#align(right)[{body}]"),
+                        Kind::Details { .. } => format!(
+                            "#strong[{}]\n\n#pad(left: 1em)[{body}]",
+                            escape_markup(section.summary.as_deref().unwrap_or("Details"))
+                        ),
+                    })
+                }
+            })
+            .collect();
+        (!parts.is_empty()).then(|| parts.join("\n\n"))
     }
 
     fn block(&mut self, node: &Node, source: &str) -> Option<String> {
@@ -487,6 +521,11 @@ impl Writer<'_> {
                 let tag = html.value.trim().to_ascii_lowercase();
                 if tag.starts_with("<br") {
                     "#linebreak()".to_string()
+                } else if let Some((src, alt, width)) = html_inline::image_tag(&html.value) {
+                    match width {
+                        Some(width) => self.sized_image(&src, &alt, width),
+                        None => self.inline_image(&src, &alt),
+                    }
                 } else {
                     // Other inline tags (`<kbd>`, `<sub>`, …) are dropped;
                     // the text between them is kept.
@@ -566,6 +605,20 @@ impl Writer<'_> {
             Some(path) => format!(
                 "#box(baseline: 0.2em, image({}, height: 1.25em, alt: {}))",
                 string_literal(&path),
+                string_literal(alt)
+            ),
+            None => missing_image(alt),
+        }
+    }
+
+    /// An image an HTML tag gives a width, in CSS pixels, at that width
+    /// (no wider than the text).
+    fn sized_image(&mut self, url: &str, alt: &str, width: f32) -> String {
+        match self.embed(url) {
+            Some(path) => format!(
+                "#box(image({}, width: {:.1}pt, alt: {}))",
+                string_literal(&path),
+                (width * 0.75).min(MAX_IMAGE_WIDTH),
                 string_literal(alt)
             ),
             None => missing_image(alt),
@@ -689,9 +742,9 @@ mod tests {
     fn write_html_samples() {
         let dir = std::path::PathBuf::from(std::env::var("SAMPLE_DIR").unwrap());
         let source = std::fs::read_to_string(dir.join("html-sample.md")).unwrap();
-        let pdf = to_pdf(&source, "t", None, Paper::A4).unwrap();
+        let pdf = to_pdf(&source, "t", Some(&dir), Paper::A4).unwrap();
         std::fs::write(dir.join("html-sample.pdf"), pdf).unwrap();
-        let docx = crate::docx::to_docx(&source, "t", None, Paper::A4).unwrap();
+        let docx = crate::docx::to_docx(&source, "t", Some(&dir), Paper::A4).unwrap();
         std::fs::write(dir.join("html-sample.docx"), docx).unwrap();
         let html = crate::export::to_html(&source, "t");
         std::fs::write(dir.join("html-sample.html"), html).unwrap();

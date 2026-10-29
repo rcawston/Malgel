@@ -94,6 +94,9 @@ pub struct DocumentView {
     /// Parser configuration for the preview; built once so the preview can
     /// tell that it is unchanged between frames.
     markdown_extensions: gpui_kit::component::text::MarkdownExtensions,
+    /// What the preview's nested views (alerts, HTML sections) need to know
+    /// about the document.
+    preview_env: Arc<crate::html_block::PreviewEnv>,
 
     path: Option<PathBuf>,
     line_ending: LineEnding,
@@ -194,9 +197,11 @@ impl DocumentView {
             }),
         ];
 
+        let preview_env = Arc::new(crate::html_block::PreviewEnv::default());
         let mut this = Self {
             editor,
-            markdown_extensions: preview_ext::markdown_extensions(&preview),
+            markdown_extensions: preview_ext::markdown_extensions(&preview, &preview_env),
+            preview_env,
             preview,
             path: None,
             line_ending: LineEnding::Lf,
@@ -1229,6 +1234,7 @@ impl DocumentView {
     fn render_preview(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let document = cx.weak_entity();
         let base_dir = self.dir().map(Arc::<Path>::from);
+        self.preview_env.set_base_dir(base_dir.clone());
         let pane_width = self.pane_width(self.preview_width, window, cx);
         let inset = column_inset(pane_width, cx);
         crate::html_inline::set_column_width(f32::from(pane_width - inset * 2.));

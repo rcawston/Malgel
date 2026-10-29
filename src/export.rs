@@ -11,7 +11,7 @@ use markdown::{CompileOptions, Options, mdast::Node};
 use crate::{
     analysis::{content_hash, preview_parse_options},
     diagram::{self, DiagramTheme},
-    html_inline, images,
+    html_block, images,
     math::{self, MathStyle},
     preview_ext::{
         AlertKind, DISPLAY_MATH_SCALE, INLINE_MATH_SCALE, display_math_source, is_inline_math,
@@ -286,17 +286,9 @@ impl Exporter {
                     html,
                 });
             }
-            // Known inline tags (`<small>`, `<sup>`, …) go through, rebuilt
-            // with only harmless attributes; other HTML stays escaped.
-            Node::Html(html) => {
-                if let Some(html) = html_inline::sanitized_tag(&html.value) {
-                    out.push(Replacement {
-                        range,
-                        block: false,
-                        html,
-                    });
-                }
-            }
+            // Raw HTML is handled with its parent, which tells a block from
+            // a tag inside a paragraph.
+            Node::Html(_) => {}
             Node::Code(_) | Node::InlineCode(_) | Node::Yaml(_) => {}
             Node::Blockquote(_) => match parse_alert(text) {
                 Some((kind, body)) => {
@@ -345,7 +337,30 @@ impl Exporter {
     }
 
     fn collect_children(&mut self, node: &Node, source: &str, out: &mut Vec<Replacement>) {
+        // Blocks of HTML sit in these; anything else holds inline tags.
+        let flow = matches!(
+            node,
+            Node::Root(_) | Node::Blockquote(_) | Node::ListItem(_) | Node::FootnoteDefinition(_)
+        );
         for child in node.children().into_iter().flatten() {
+            if let Node::Html(_) = child {
+                // The tags Malgel knows (`<small>`, `<details>`,
+                // `<p align>`, …) go through, rebuilt with only harmless
+                // attributes; others are left out, keeping their text.
+                if let Some(range) = child
+                    .position()
+                    .map(|position| position.start.offset..position.end.offset)
+                    .filter(|range| source.get(range.clone()).is_some())
+                {
+                    let html = html_block::sanitize_fragment(&source[range.clone()]);
+                    out.push(Replacement {
+                        range,
+                        block: flow,
+                        html,
+                    });
+                }
+                continue;
+            }
             self.collect(child, source, out);
         }
     }
@@ -558,6 +573,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn keeps_html_sections() {
+        let html = to_html(
+            "<details>\n<summary>More</summary>\n\nHidden **text**.\n\n</details>\n\n\
+             <p align=\"center\"><img src=\"logo.png\" width=\"90\"></p>\n",
+            "t",
+        );
+        assert!(
+            html.contains("<details>\n<summary>More</summary>"),
+            "{html}"
+        );
+        assert!(html.contains("<p>Hidden <strong>text</strong>.</p>\n</details>"));
+        assert!(html.contains("<p align=\"center\"><img src=\"logo.png\" width=\"90\"></p>"));
+        assert!(!html.contains("&lt;details"));
+    }
+
+    #[test]
     fn keeps_known_inline_tags() {
         let html = to_html(
             "Price <small class=\"detail\">(plus tax)</small>, H<sub>2</sub>O and \
@@ -571,7 +602,7 @@ mod tests {
         assert!(html.contains("H<sub>2</sub>O"));
         assert!(html.contains("<span style=\"color:#d1242f\">red</span>"));
         assert!(!html.contains("onclick"));
-        assert!(html.contains("&lt;script&gt;"));
+        assert!(html.contains("&lt;script&gt;x()&lt;/script&gt;"));
     }
 
     #[test]

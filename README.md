@@ -29,6 +29,12 @@ A fast, native Markdown editor and previewer written in pure Rust with
   `<br>`, in the preview and in HTML, PDF and Word exports. Classes are kept
   in HTML exports for your own style sheet; other tags are left out and the
   text inside them kept.
+- **HTML sections.** `<details>` with a `<summary>` opens and closes with a
+  click (`<details open>` starts open), and `align="center"` or `"right"` on
+  `<div>`, `<p>` and headings, or `<center>`, aligns what's inside: README
+  logos, badges and titles look as they do on GitHub. Sections may hold
+  Markdown between blank lines. PDF and Word exports print sections open,
+  with their summary in bold.
 - **Math.** LaTeX formulas, inline (`$…$`) and display (`$$…$$`), are
   typeset in pure Rust: LaTeX is translated to Typst math and laid out by the
   Typst compiler with its bundled New Computer Modern Math font. Formulas sit
@@ -266,6 +272,7 @@ dictionaries and on macOS those in `~/Library/Spelling` are found too.
 | `src/diagram_viewer.rs` | The window that shows a diagram larger, to zoom and move around |
 | `src/links.rs` | Where links in the preview lead: headings, documents, files, the web |
 | `src/html_inline.rs` | Inline HTML tags in the preview, and pairing them up for exports |
+| `src/html_block.rs` | HTML sections (`<details>`, aligned blocks) in the preview and exports, and safe HTML for HTML export |
 | `src/menus.rs`, `src/actions.rs` | Menus, actions and key bindings |
 | `src/settings.rs`, `src/themes.rs` | Preferences and theme application |
 | `build.rs`, `packaging/` | Windows exe icon and version info; app icon, bundles and installers |
