@@ -30,6 +30,7 @@ mod html_inline;
 mod i18n;
 mod images;
 mod links;
+mod live;
 mod math;
 mod menus;
 mod pdf;

@@ -38,11 +38,14 @@ pub enum Layout {
     #[default]
     Split,
     Preview,
+    /// The formatted document, edited in place (see `live`).
+    Live,
 }
 
 impl Layout {
+    /// Whether the full Markdown editor is on screen.
     pub fn shows_editor(self) -> bool {
-        self != Layout::Preview
+        matches!(self, Layout::Editor | Layout::Split)
     }
 }
 

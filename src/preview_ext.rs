@@ -39,6 +39,7 @@ use crate::{
 pub fn markdown_extensions(
     preview: &gpui_kit::Entity<TextViewState>,
     env: &Arc<PreviewEnv>,
+    live: &Arc<crate::live::LiveState>,
 ) -> MarkdownExtensions {
     let cache = MathCache::new(preview);
     let diagrams = DiagramCache::new(preview);
@@ -71,7 +72,10 @@ pub fn markdown_extensions(
         body_extensions: with_math(MarkdownExtensions::default()),
         env: env.clone(),
     };
-    let extensions = with_math(MarkdownExtensions::default().frontmatter())
+    // Live Preview's block editor goes in before anything else can claim
+    // the blocks it's editing.
+    let live = crate::live::LiveBlockPlugin::new(live.clone(), preview.downgrade());
+    let extensions = with_math(MarkdownExtensions::default().frontmatter().plugin(live))
         .plugin(gpui_kit::component::text::FrontmatterPlugin::new())
         .plugin(alert);
     _ = full.set(extensions.clone());

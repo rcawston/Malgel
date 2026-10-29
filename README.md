@@ -15,8 +15,15 @@ A fast, native Markdown editor and previewer written in pure Rust with
   stays on the same block; scroll the preview and the editor follows to the
   matching source line. Whichever pane you are pointing at or typing in
   leads, so the two never fight.
-- **Three layouts.** Editor only, editor and preview, or preview only
-  (Ctrl+1/2/3). Single-pane layouts center a comfortable reading column.
+- **Four layouts.** Editor only, editor and preview, preview only, or Live
+  Preview (Ctrl+1/2/3/4). Single-pane layouts center a comfortable reading
+  column.
+- **Live Preview.** Write in the formatted document, as in Obsidian: the
+  block you are in shows its Markdown, everything else stays rendered.
+  Click a paragraph, list, table or callout to edit it where you clicked;
+  arrow keys move from block to block, and Backspace at the start of a block
+  joins it to the one before. Formatting commands, smart lists and tables,
+  undo and links work as in the editor.
 - **Rich preview.** Tables, task lists, strikethrough, fenced code with
   highlighting for 28 languages and a copy button, YAML front matter shown as
   a property list, local images (relative to the document), remote images
@@ -219,7 +226,7 @@ Ctrl is ⌘ on macOS.
 | Next / previous tab | Ctrl+Tab / Ctrl+Shift+Tab |
 | File sidebar, Outline, Focus mode | Ctrl+Shift+B, Ctrl+Alt+O, Ctrl+Shift+F |
 | Settings | Ctrl+, |
-| Editor / Editor and preview / Preview | Ctrl+1 / Ctrl+2 / Ctrl+3 |
+| Editor / Editor and preview / Preview / Live Preview | Ctrl+1 / Ctrl+2 / Ctrl+3 / Ctrl+4 |
 | Go to heading… | Ctrl+Shift+O |
 | Find…, Replace… | Ctrl+F, Ctrl+H |
 | Bold, Italic, Strikethrough | Ctrl+B, Ctrl+I, Ctrl+Shift+X |
@@ -258,7 +265,8 @@ dictionaries and on macOS those in `~/Library/Spelling` are found too.
 | --- | --- |
 | `src/main.rs` | Startup: GPUI Kit, HTTP client for images, themes, key bindings, menus, window |
 | `src/workspace.rs` | The window: title bar, tabs, sidebars, status bar, settings, file commands, watching files, the session |
-| `src/document_view.rs` | One document: editor and preview, scroll sync, smart keys and paste, spelling, focus mode, recovery |
+| `src/document_view.rs` | One document: editor and preview, Live Preview, scroll sync, smart keys and paste, spelling, focus mode, recovery |
+| `src/live.rs` | Live Preview: the blocks of a document, and the block editor standing in the preview |
 | `src/smart_edit.rs` | List continuation and nesting, table navigation and tidying, paste as link — pure and tested |
 | `src/file_tree.rs` | The file sidebar: creating, renaming, deleting and moving files |
 | `src/spell.rs` | Spell checking of prose with Hunspell dictionaries |

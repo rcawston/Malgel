@@ -401,13 +401,7 @@ impl Workspace {
     }
 
     fn focus_active(&self, window: &mut Window, cx: &mut App) {
-        let doc = self.active_document().read(cx);
-        let focus = if AppSettings::get(cx).layout.shows_editor() || AppSettings::get(cx).focus_mode
-        {
-            doc.editor().focus_handle(cx)
-        } else {
-            doc.preview().read(cx).focus_handle().clone()
-        };
+        let focus = self.active_document().read(cx).focus_target(cx);
         window.defer(cx, move |window, cx| focus.focus(window, cx));
     }
 
@@ -1571,10 +1565,17 @@ impl Workspace {
                                 tr!("menu.preview"),
                                 Layout::Preview,
                             ))
+                            .child(layout_button(
+                                "layout-live",
+                                IconName::SquarePen,
+                                tr!("menu.live_preview"),
+                                Layout::Live,
+                            ))
                             .on_click(cx.listener(|_, clicked: &Vec<usize>, window, cx| {
                                 let layout = match clicked.first() {
                                     Some(0) => Layout::Editor,
                                     Some(2) => Layout::Preview,
+                                    Some(3) => Layout::Live,
                                     _ => Layout::Split,
                                 };
                                 window.dispatch_action(Box::new(SetLayout(layout)), cx);

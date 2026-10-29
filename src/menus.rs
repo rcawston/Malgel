@@ -203,6 +203,8 @@ pub fn build(cx: &App) -> Vec<Menu> {
             .checked(settings.layout == Layout::Split),
         MenuItem::action(tr!("menu.preview"), SetLayout(Layout::Preview))
             .checked(settings.layout == Layout::Preview),
+        MenuItem::action(tr!("menu.live_preview"), SetLayout(Layout::Live))
+            .checked(settings.layout == Layout::Live),
         MenuItem::action(tr!("menu.focus_mode"), ToggleFocusMode).checked(settings.focus_mode),
         MenuItem::separator(),
         MenuItem::action(tr!("menu.tabs"), ToggleTabs).checked(settings.tabs),
@@ -218,10 +220,14 @@ pub fn build(cx: &App) -> Vec<Menu> {
             .checked(settings.line_numbers),
         submenu(tr!("menu.spelling"), spelling),
         MenuItem::separator(),
-        MenuItem::action(tr!("menu.zoom_in"), ZoomIn),
-        MenuItem::action(tr!("menu.zoom_out"), ZoomOut),
-        MenuItem::action(tr!("menu.actual_size"), ZoomReset),
-        MenuItem::separator(),
+        submenu(
+            tr!("menu.zoom"),
+            vec![
+                MenuItem::action(tr!("menu.zoom_in"), ZoomIn),
+                MenuItem::action(tr!("menu.zoom_out"), ZoomOut),
+                MenuItem::action(tr!("menu.actual_size"), ZoomReset),
+            ],
+        ),
         // Themes live in the Appearance submenu: menus with more than
         // MAX_MENU_ITEMS entries turn into small scrolling lists.
         submenu(

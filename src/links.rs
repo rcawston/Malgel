@@ -169,6 +169,16 @@ pub fn find_heading(outline: &[Heading], anchor: &str) -> Option<usize> {
     loose
 }
 
+thread_local! {
+    static LINK_CLICKED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether a link was clicked since this was last asked, so Live Preview
+/// follows it instead of editing the block it's in.
+pub fn take_link_clicked() -> bool {
+    LINK_CLICKED.with(|clicked| clicked.replace(false))
+}
+
 /// The preview's link handler: follow the link in the workspace. A middle
 /// click, or a click with Command (macOS) or Control held, opens a linked
 /// document the other way from the setting (a new tab or the same one).
@@ -187,6 +197,7 @@ pub fn on_click(url: &SharedString, event: &ClickEvent, window: &mut Window, cx:
             false
         }
     };
+    LINK_CLICKED.with(|clicked| clicked.set(true));
     window.dispatch_action(
         Box::new(FollowLink {
             url: url.clone(),

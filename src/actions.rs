@@ -154,6 +154,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-1", SetLayout(Layout::Editor), workspace),
         KeyBinding::new("secondary-2", SetLayout(Layout::Split), workspace),
         KeyBinding::new("secondary-3", SetLayout(Layout::Preview), workspace),
+        KeyBinding::new("secondary-4", SetLayout(Layout::Live), workspace),
         // The last binding for an action is the one menus display.
         KeyBinding::new("secondary-+", ZoomIn, None),
         KeyBinding::new("secondary-=", ZoomIn, None),

@@ -681,6 +681,12 @@ menu.link:
   es: "Enlace"
   zh-CN: "链接"
   ja: "リンク"
+menu.live_preview:
+  en: "Live Preview"
+  fr: "Aperçu en direct"
+  es: "Vista previa en vivo"
+  zh-CN: "实时预览"
+  ja: "ライブプレビュー"
 menu.markdown_guide:
   en: "Markdown guide"
   fr: "Guide Markdown"
@@ -867,6 +873,12 @@ menu.wrap_lines:
   es: "Ajustar líneas"
   zh-CN: "自动换行"
   ja: "行を折り返す"
+menu.zoom:
+  en: "Zoom"
+  fr: "Zoom"
+  es: "Zoom"
+  zh-CN: "缩放"
+  ja: "ズーム"
 menu.zoom_in:
   en: "Zoom in"
   fr: "Zoom avant"

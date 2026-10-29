@@ -10,10 +10,11 @@ use std::{
 };
 
 use gpui_kit::{
-    App, AppContext as _, ClipboardEntry, ClipboardItem, Context, Entity, EventEmitter,
-    Focusable as _, HighlightStyle, InteractiveElement as _, IntoElement, KeyDownEvent, ListOffset,
-    MouseMoveEvent, ParentElement as _, Pixels, Render, ScrollWheelEvent, SharedString,
-    Styled as _, Subscription, Task, Window,
+    App, AppContext as _, ClipboardEntry, ClipboardItem, Context, Entity, EntityInputHandler as _,
+    EventEmitter, FocusHandle, Focusable as _, HighlightStyle, InteractiveElement as _,
+    IntoElement, KeyDownEvent, ListOffset, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, ParentElement as _, Pixels, PlatformInput, Point, Render, ScrollWheelEvent,
+    SharedString, Styled as _, Subscription, Task, Window,
     base::{
         TextView, TextViewState,
         input::{Diagnostic, DiagnosticSeverity},
@@ -22,8 +23,9 @@ use gpui_kit::{
         ActiveTheme as _, ElementExt as _, RopeExt as _,
         clipboard::Clipboard,
         input::{
-            Copy, Cut, Editor, EditorState, Enter, IndentInline, InputEvent, OutdentInline, Paste,
-            SelectAll, TabSize, TextDecoration, TextDecorationCollection,
+            Backspace, Copy, Cut, Delete, Editor, EditorState, Enter, IndentInline, InputEvent,
+            MoveDown, MoveLeft, MoveRight, MoveUp, OutdentInline, Paste, Redo, SelectAll, TabSize,
+            TextDecoration, TextDecorationCollection, TextareaState, Undo,
         },
         native_menu::NativeMenu,
         resizable::{h_resizable, resizable_panel},
@@ -39,7 +41,7 @@ use crate::{
     analysis::{Analysis, content_hash},
     document::{LineEnding, display_name},
     format::{self, Edit},
-    images, preview_ext,
+    images, live, preview_ext,
     session::{self, DiskStamp, Recovery},
     settings::Layout,
     smart_edit, spell,
@@ -88,6 +90,27 @@ pub enum DocumentEvent {
     Notify(SharedString),
 }
 
+/// A block opened for editing in Live Preview.
+struct LiveSession {
+    /// The document as it was.
+    before: String,
+    caret: usize,
+    /// The block's text as opened.
+    block: String,
+}
+
+/// Where the caret leaves a block for in Live Preview.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LiveMove {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+/// Most cross-block undo steps kept in Live Preview.
+const LIVE_UNDO_LIMIT: usize = 100;
+
 pub struct DocumentView {
     editor: Entity<EditorState>,
     preview: Entity<TextViewState>,
@@ -97,6 +120,25 @@ pub struct DocumentView {
     /// What the preview's nested views (alerts, HTML sections) need to know
     /// about the document.
     preview_env: Arc<crate::html_block::PreviewEnv>,
+
+    /// Live Preview: the editor for the block being edited in place, the
+    /// block's range in the source, and what the preview knows of it.
+    live_editor: Entity<TextareaState>,
+    live_region: Option<Range<usize>>,
+    live_state: Arc<live::LiveState>,
+    /// Set while the block editor is filled from the document, so the
+    /// change isn't written back.
+    live_filling: bool,
+    /// Changed to have the preview parse again when the edited block moves.
+    parser_revision: u64,
+    /// The text when the current block was opened, and its caret.
+    live_session: Option<LiveSession>,
+    /// Document text before each edited block, to undo across blocks, and
+    /// what undoing took away, to redo.
+    live_undo: Vec<(String, usize)>,
+    live_redo: Vec<(String, usize)>,
+    /// Where the last left button press in Live Preview landed.
+    live_press: Option<Point<Pixels>>,
 
     path: Option<PathBuf>,
     line_ending: LineEnding,
@@ -197,11 +239,42 @@ impl DocumentView {
             }),
         ];
 
+        let live_editor = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .auto_grow(1, 100_000)
+                .placeholder(tr!("editor.placeholder"))
+        });
+        live::register_editor(preview.entity_id(), &live_editor, cx);
+        let mut subscriptions = subscriptions;
+        subscriptions.push(cx.subscribe_in(
+            &live_editor,
+            window,
+            |this, _, event: &InputEvent, window, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.live_changed(window, cx);
+                }
+            },
+        ));
+
         let preview_env = Arc::new(crate::html_block::PreviewEnv::default());
+        let live_state = Arc::new(live::LiveState::default());
         let mut this = Self {
             editor,
-            markdown_extensions: preview_ext::markdown_extensions(&preview, &preview_env),
+            markdown_extensions: preview_ext::markdown_extensions(
+                &preview,
+                &preview_env,
+                &live_state,
+            ),
             preview_env,
+            live_editor,
+            live_region: None,
+            live_state,
+            live_filling: false,
+            parser_revision: 0,
+            live_session: None,
+            live_undo: Vec::new(),
+            live_redo: Vec::new(),
+            live_press: None,
             preview,
             path: None,
             line_ending: LineEnding::Lf,
@@ -240,10 +313,6 @@ impl DocumentView {
 
     pub fn editor(&self) -> &Entity<EditorState> {
         &self.editor
-    }
-
-    pub fn preview(&self) -> &Entity<TextViewState> {
-        &self.preview
     }
 
     pub fn path(&self) -> Option<&PathBuf> {
@@ -328,6 +397,19 @@ impl DocumentView {
         // `set_value` does not emit a change event.
         self.on_text_changed(false, cx);
         self.dirty = false;
+        self.live_reopen(window, cx);
+    }
+
+    /// The whole text was replaced: in Live Preview, edit the block at the
+    /// caret afresh, without undo steps for text that isn't the same.
+    fn live_reopen(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.live_region.is_some() {
+            self.live_session = None;
+            self.live_undo.clear();
+            self.live_redo.clear();
+            let caret = self.editor.read(cx).cursor();
+            self.live_open_at(caret, window, cx);
+        }
     }
 
     /// Restore unsaved text recovered after a crash; it stays unsaved.
@@ -355,6 +437,7 @@ impl DocumentView {
         self.editor
             .update(cx, |editor, cx| editor.set_value(recovery.text, window, cx));
         self.on_text_changed(false, cx);
+        self.live_reopen(window, cx);
     }
 
     /// Show `text`, which another program saved to the document's file,
@@ -370,6 +453,7 @@ impl DocumentView {
         let path = self.path.clone();
         self.load_text(text, path, line_ending, window, cx);
         self.set_cursor(cursor, window, cx);
+        self.live_reopen(window, cx);
         self.discard_recovery();
     }
 
@@ -504,6 +588,12 @@ impl DocumentView {
 
     fn apply_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let settings = AppSettings::get(cx).clone();
+        if Self::is_live(cx) && self.live_region.is_none() {
+            let caret = self.editor.read(cx).cursor();
+            self.live_open_at(caret, window, cx);
+        } else if !Self::is_live(cx) && self.live_region.is_some() {
+            self.live_close(window, cx);
+        }
         self.editor.update(cx, |editor, cx| {
             editor.set_soft_wrap(settings.soft_wrap, window, cx);
             editor.set_line_number(settings.line_numbers && !settings.focus_mode, window, cx);
@@ -710,6 +800,429 @@ impl DocumentView {
     }
 
     // ---------------------------------------------------------------------
+    // Live Preview
+
+    pub fn is_live(cx: &App) -> bool {
+        let settings = AppSettings::get(cx);
+        settings.layout == Layout::Live && !settings.focus_mode
+    }
+
+    /// Where keyboard focus belongs in the current layout.
+    pub fn focus_target(&self, cx: &App) -> FocusHandle {
+        // By the layout, not whether a block is open: a layout just chosen
+        // opens or closes the block editor after focus is given.
+        if Self::is_live(cx) {
+            self.live_editor.focus_handle(cx)
+        } else if Self::shows_editor(cx) {
+            self.editor.focus_handle(cx)
+        } else {
+            self.preview.read(cx).focus_handle().clone()
+        }
+    }
+
+    /// Edit the block holding `offset` (a caret position in the source).
+    fn live_open_at(&mut self, offset: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let source = self.editor.read(cx).value().to_string();
+        let region = live::region_at(&source, offset);
+        self.live_open(region, offset..offset, window, cx);
+    }
+
+    /// Edit `region` of the source in the block editor, with `selection`
+    /// (in the source) selected.
+    fn live_open(
+        &mut self,
+        region: Range<usize>,
+        selection: Range<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let source = self.editor.read(cx).value().to_string();
+        self.live_end_session(&source);
+        let region = region.start.min(source.len())..region.end.min(source.len());
+        let local = |offset: usize| offset.clamp(region.start, region.end) - region.start;
+        let local_selection = local(selection.start)..local(selection.end);
+        let text = source[region.clone()].to_string();
+        self.live_session = Some(LiveSession {
+            before: source.clone(),
+            caret: selection.end,
+            block: text.clone(),
+        });
+        self.live_region = Some(region.clone());
+        self.live_state.set_region(Some(region.clone()));
+        self.live_filling = true;
+        self.live_editor.update(cx, |editor, cx| {
+            editor.set_value(text, window, cx);
+            editor.set_selected_range(local_selection.clone(), cx);
+            editor.focus(window, cx);
+        });
+        self.live_filling = false;
+        let caret = region.start + local_selection.end;
+        self.editor.update(cx, |editor, cx| {
+            // The block editor has none, so the two stay alike.
+            editor.set_auto_close(false, window, cx);
+            editor.set_selected_range(caret..caret, cx);
+        });
+        self.reparse_preview();
+        self.reveal_live_block(&source, &region, cx);
+        cx.notify();
+    }
+
+    /// Keep the document as it was before an edited block, to undo it.
+    fn live_end_session(&mut self, source: &str) {
+        if let Some(session) = self.live_session.take()
+            && session.before != source
+        {
+            self.live_undo.push((session.before, session.caret));
+            if self.live_undo.len() > LIVE_UNDO_LIMIT {
+                self.live_undo.remove(0);
+            }
+            self.live_redo.clear();
+        }
+    }
+
+    fn live_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(region) = self.live_region.take() {
+            let caret = region.start + self.live_editor.read(cx).cursor();
+            self.editor.update(cx, |editor, cx| {
+                editor.set_selected_range(caret..caret, cx);
+                editor.set_auto_close(true, window, cx);
+            });
+        }
+        self.live_session = None;
+        self.live_undo.clear();
+        self.live_redo.clear();
+        self.live_state.set_region(None);
+        self.reparse_preview();
+        cx.notify();
+    }
+
+    /// Have the preview parse again, as the edited block changed.
+    fn reparse_preview(&mut self) {
+        self.parser_revision += 1;
+        self.markdown_extensions = self
+            .markdown_extensions
+            .clone()
+            .parser_revision(self.parser_revision);
+    }
+
+    /// Scroll the preview to the block being edited.
+    fn reveal_live_block(&self, source: &str, region: &Range<usize>, cx: &mut Context<Self>) {
+        let ix = live::blocks(source)
+            .iter()
+            .position(|block| block.end > region.start)
+            .unwrap_or(0);
+        self.preview.update(cx, |preview, cx| {
+            preview.list_state().scroll_to_reveal_item(ix);
+            cx.notify();
+        });
+    }
+
+    /// The block editor changed: make the same change to the document.
+    fn live_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.live_filling {
+            return;
+        }
+        let Some(region) = self.live_region.clone() else {
+            return;
+        };
+        let source = self.editor.read(cx).value().to_string();
+        let Some(old) = source.get(region.clone()) else {
+            return;
+        };
+        let new = self.live_editor.read(cx).value().to_string();
+        let (range, inserted) = live::diff(old, &new);
+        if range.is_empty() && inserted.is_empty() {
+            return;
+        }
+        let changed = region.start + range.start..region.start + range.end;
+        let region = region.start..region.start + new.len();
+        // The preview parses the changed text with the region as it is now.
+        self.live_region = Some(region.clone());
+        self.live_state.set_region(Some(region.clone()));
+        let utf16 = live::utf16_range(&source, &changed);
+        let inserted = inserted.to_string();
+        let caret = region.start + self.live_editor.read(cx).cursor();
+        self.editor.update(cx, |editor, cx| {
+            // As typed, so the editor's undo groups it as typing.
+            editor.replace_text_in_range(Some(utf16), &inserted, window, cx);
+            editor.set_selected_range(caret..caret, cx);
+        });
+        // A blank line typed (or blocks pasted) splits the block: edit only
+        // the part holding the caret and show the rest formatted.
+        let source = self.editor.read(cx).value().to_string();
+        if source
+            .get(region)
+            .is_some_and(|text| live::blocks(text).len() > 1)
+        {
+            self.live_open_at(caret, window, cx);
+        }
+    }
+
+    /// Arrow keys at the edge of the block move to the next block over.
+    /// Returns whether the key was handled.
+    fn live_move(
+        &mut self,
+        direction: LiveMove,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(region) = self.live_region.clone() else {
+            return false;
+        };
+        if !self.live_editor.focus_handle(cx).is_focused(window) {
+            return false;
+        }
+        let editor = self.live_editor.read(cx);
+        let selection = editor.selected_range();
+        let text = editor.value();
+        let at_edge = selection.is_empty()
+            && match direction {
+                LiveMove::Left => selection.start == 0,
+                LiveMove::Right => selection.end == text.len(),
+                LiveMove::Up => {
+                    !text[..selection.start].contains('\n') && self.live_on_edge_row(true, cx)
+                }
+                LiveMove::Down => {
+                    !text[selection.end..].contains('\n') && self.live_on_edge_row(false, cx)
+                }
+            };
+        if !at_edge {
+            return false;
+        }
+        let source = self.editor.read(cx).value().to_string();
+        let target = match direction {
+            LiveMove::Up | LiveMove::Left => {
+                live::previous_region(&source, &region).map(|block| (block.clone(), block.end))
+            }
+            LiveMove::Down | LiveMove::Right => {
+                live::next_region(&source, &region).map(|block| (block.clone(), block.start))
+            }
+        };
+        let Some((target, caret)) = target else {
+            return false;
+        };
+        self.live_open(target, caret..caret, window, cx);
+        true
+    }
+
+    /// Whether the caret is on the block editor's first (or last) row, as
+    /// wrapped.
+    fn live_on_edge_row(&self, first: bool, cx: &App) -> bool {
+        let editor = self.live_editor.read(cx);
+        let (Some((caret, _)), Some(line_height)) = (editor.cursor_layout(), editor.line_height())
+        else {
+            return true;
+        };
+        let bounds = editor.input_bounds();
+        if first {
+            caret.top() - bounds.top() < line_height * 0.5
+        } else {
+            bounds.bottom() - caret.bottom() < line_height * 0.5
+        }
+    }
+
+    /// Backspace at the start of the block, or Delete at its end, joins it
+    /// to the block before or after, as in any editor. Returns whether the
+    /// key was handled.
+    fn live_join(&mut self, backward: bool, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some(region) = self.live_region.clone() else {
+            return false;
+        };
+        if !self.live_editor.focus_handle(cx).is_focused(window) {
+            return false;
+        }
+        let selection = self.live_editor.read(cx).selected_range();
+        let block_len = self.live_editor.read(cx).value().len();
+        let source = self.editor.read(cx).value().to_string();
+        let range = if backward && selection == (0..0) && region.start > 0 {
+            let previous = source[..region.start]
+                .chars()
+                .next_back()
+                .map_or(0, char::len_utf8);
+            region.start - previous..region.start
+        } else if !backward && selection == (block_len..block_len) && region.end < source.len() {
+            let next = source[region.end..]
+                .chars()
+                .next()
+                .map_or(0, char::len_utf8);
+            region.end..region.end + next
+        } else {
+            return false;
+        };
+        let caret = range.start;
+        self.apply(
+            Edit {
+                range,
+                text: String::new(),
+                selection: caret..caret,
+            },
+            window,
+            cx,
+        );
+        true
+    }
+
+    /// Undo or redo in Live Preview: within the block, its editor's own;
+    /// past that, the document as it was before each edited block.
+    fn live_history(&mut self, redo: bool, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.live_region.is_none() || !self.live_editor.focus_handle(cx).is_focused(window) {
+            return false;
+        }
+        let block_changed = self
+            .live_session
+            .as_ref()
+            .is_some_and(|session| *self.live_editor.read(cx).value() != session.block);
+        if !redo && block_changed {
+            // The block editor undoes its own typing.
+            return false;
+        }
+        let source = self.editor.read(cx).value().to_string();
+        let caret = self.editing(cx).1.end;
+        // Whatever this block changed is a step of its own.
+        self.live_end_session(&source);
+        let step = if redo {
+            self.live_redo.pop()
+        } else {
+            self.live_undo.pop()
+        };
+        let Some((text, at)) = step else {
+            self.live_open_at(caret, window, cx);
+            return true;
+        };
+        let current = self.editor.read(cx).value().to_string();
+        if redo {
+            self.live_undo.push((current, caret));
+        } else {
+            self.live_redo.push((current, caret));
+        }
+        self.editor
+            .update(cx, |editor, cx| editor.replace_all(text, window, cx));
+        // Not an edit of its own: keep the redo steps.
+        let redo_steps = std::mem::take(&mut self.live_redo);
+        let undo_steps = std::mem::take(&mut self.live_undo);
+        self.live_session = None;
+        self.live_open_at(at, window, cx);
+        self.live_redo = redo_steps;
+        self.live_undo = undo_steps;
+        true
+    }
+
+    /// A click in Live Preview's rendered text edits the block clicked, at
+    /// the place clicked; links are followed instead.
+    fn live_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let press = self.live_press.take();
+        if self.live_region.is_none() {
+            return;
+        }
+        if crate::links::take_link_clicked() {
+            // Keep typing in the block after following the link (or after
+            // the dialog asking first, which gives focus back on closing).
+            self.live_editor
+                .update(cx, |editor, cx| editor.focus(window, cx));
+            return;
+        }
+        if let Some(range) = self.preview.read(cx).selected_source_range() {
+            if range.is_empty() {
+                self.preview
+                    .update(cx, |preview, cx| preview.clear_selection(cx));
+                self.live_open_at(range.start, window, cx);
+            }
+            // Otherwise text was selected, to copy.
+            return;
+        }
+        // A plain click selects nothing: find the block under it instead,
+        // which the preview lists one to a row.
+        let Some(press) = press else {
+            return;
+        };
+        let source = self.editor.read(cx).value().to_string();
+        let blocks = live::blocks(&source);
+        let list = self.preview.read(cx).list_state().clone();
+        if list.item_count() != blocks.len() {
+            return;
+        }
+        let Some((ix, row)) = (0..blocks.len()).find_map(|ix| {
+            let row = list.bounds_for_item(ix)?;
+            (row.top() <= press.y && press.y < row.bottom()).then_some((ix, row))
+        }) else {
+            return;
+        };
+        if self
+            .live_region
+            .as_ref()
+            .is_some_and(|region| region.start <= blocks[ix].start && blocks[ix].end <= region.end)
+        {
+            // The editor itself.
+            return;
+        }
+        let block = blocks[ix].clone();
+        self.live_open(block.clone(), block.end..block.end, window, cx);
+        self.live_place_caret(ix, row.top(), press, 30, window, cx);
+    }
+
+    /// Once the block editor stands in row `ix`, put its caret where `press`
+    /// landed on the rendered block, the row then at `top` (it moves when an
+    /// edited block above it closes). Tries for `frames` frames, as the
+    /// preview parses again first.
+    fn live_place_caret(
+        &mut self,
+        ix: usize,
+        top: Pixels,
+        press: Point<Pixels>,
+        frames: u8,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let document = cx.entity().downgrade();
+        window.on_next_frame(move |window, cx| {
+            let position = document.update(cx, |this, cx| {
+                let row = this.preview.read(cx).list_state().bounds_for_item(ix)?;
+                let editor = this.live_editor.read(cx).input_bounds();
+                if (editor.top() - row.top()).abs() >= px(8.) {
+                    if frames > 0 {
+                        this.live_place_caret(ix, top, press, frames - 1, window, cx);
+                    }
+                    return None;
+                }
+                // Within the editor, which may be smaller than the
+                // rendered block (an alert's box, a table's grid).
+                let inside = |value: Pixels, min: Pixels, max: Pixels| {
+                    value.max(min).min((max - px(1.)).max(min))
+                };
+                Some(point(
+                    inside(press.x, editor.left(), editor.right()),
+                    inside(press.y + (row.top() - top), editor.top(), editor.bottom()),
+                ))
+            });
+            let Ok(Some(position)) = position else {
+                return;
+            };
+            // Click the editor there, as the user did the rendered text: it
+            // knows where its own wrapped lines put each character.
+            let modifiers = Modifiers::default();
+            window.dispatch_event(
+                PlatformInput::MouseDown(MouseDownEvent {
+                    button: MouseButton::Left,
+                    position,
+                    modifiers,
+                    click_count: 1,
+                    first_mouse: false,
+                }),
+                cx,
+            );
+            window.dispatch_event(
+                PlatformInput::MouseUp(MouseUpEvent {
+                    button: MouseButton::Left,
+                    position,
+                    modifiers,
+                    click_count: 1,
+                }),
+                cx,
+            );
+        });
+    }
+
+    // ---------------------------------------------------------------------
     // Editing
 
     fn shows_editor(cx: &App) -> bool {
@@ -718,11 +1231,32 @@ impl DocumentView {
     }
 
     fn apply(&mut self, edit: Edit, window: &mut Window, cx: &mut Context<Self>) {
+        let selection = edit.selection.clone();
         self.editor.update(cx, |editor, cx| {
             editor.set_selected_range(edit.range.clone(), cx);
             editor.replace(edit.text, window, cx);
             editor.set_selected_range(edit.selection, cx);
         });
+        if self.live_region.is_some() {
+            let source = self.editor.read(cx).value().to_string();
+            let region = live::region_at(&source, selection.end);
+            self.live_open(region, selection, window, cx);
+        }
+    }
+
+    /// The document's text and the selection editing applies to: in Live
+    /// Preview, the block editor's, placed in the document.
+    fn editing(&self, cx: &App) -> (String, Range<usize>) {
+        let text = self.editor.read(cx).value().to_string();
+        let selection = match &self.live_region {
+            Some(region) => {
+                let selection = self.live_editor.read(cx).selected_range();
+                let at = |offset: usize| (region.start + offset).min(text.len());
+                at(selection.start)..at(selection.end)
+            }
+            None => self.editor.read(cx).selected_range(),
+        };
+        (text, selection)
     }
 
     /// Run a formatting command on the selection.
@@ -732,14 +1266,16 @@ impl DocumentView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !Self::shows_editor(cx) {
+        if !Self::shows_editor(cx) && self.live_region.is_none() {
             return;
         }
-        let text = self.editor.read(cx).value().to_string();
-        let edit = build(&text, self.editor.read(cx).selected_range());
+        let (text, selection) = self.editing(cx);
+        let edit = build(&text, selection);
         self.apply(edit, window, cx);
-        self.editor
-            .update(cx, |editor, cx| editor.focus(window, cx));
+        if self.live_region.is_none() {
+            self.editor
+                .update(cx, |editor, cx| editor.focus(window, cx));
+        }
     }
 
     pub fn inline(&mut self, style: format::Inline, window: &mut Window, cx: &mut Context<Self>) {
@@ -759,8 +1295,7 @@ impl DocumentView {
     }
 
     pub fn tidy_table(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let text = self.editor.read(cx).value().to_string();
-        let selection = self.editor.read(cx).selected_range();
+        let (text, selection) = self.editing(cx);
         match smart_edit::tidy_table(&text, selection) {
             Some(edit) => self.apply(edit, window, cx),
             None => cx.emit(DocumentEvent::Notify(tr!("table.no_table"))),
@@ -775,12 +1310,15 @@ impl DocumentView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if !self.editor.focus_handle(cx).is_focused(window) {
+        let focused = match self.live_region {
+            Some(_) => self.live_editor.focus_handle(cx).is_focused(window),
+            None => self.editor.focus_handle(cx).is_focused(window),
+        };
+        if !focused {
             return false;
         }
-        let editor = self.editor.read(cx);
-        let text = editor.value().to_string();
-        let Some(edit) = assist(&text, editor.selected_range()) else {
+        let (text, selection) = self.editing(cx);
+        let Some(edit) = assist(&text, selection) else {
             return false;
         };
         self.apply(edit, window, cx);
@@ -811,8 +1349,7 @@ impl DocumentView {
                     }
                 }
                 ClipboardEntry::String(string) => {
-                    let text = self.editor.read(cx).value().to_string();
-                    let selection = self.editor.read(cx).selected_range();
+                    let (text, selection) = self.editing(cx);
                     if let Some(edit) = smart_edit::paste_link(&text, selection, string.text()) {
                         self.apply(edit, window, cx);
                         return true;
@@ -1314,6 +1851,96 @@ impl DocumentView {
             })
     }
 
+    /// Live Preview: the preview, editing in place. Keys at the edges of the
+    /// block being edited move between blocks, and clicks open the block
+    /// clicked.
+    fn render_live(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let content = if self.source.trim().is_empty() {
+            // No blocks for the editor to stand in for.
+            let inset = column_inset(self.pane_width(self.preview_width, window, cx), cx);
+            div()
+                .size_full()
+                .bg(cx.theme().background)
+                .pl(inset)
+                .pr(inset)
+                .py_8()
+                .child(live::block_editor(&self.live_editor, None))
+                .into_any_element()
+        } else {
+            self.render_preview(window, cx).into_any_element()
+        };
+        div()
+            .id("live-pane")
+            .size_full()
+            .capture_action(cx.listener(|this, _: &MoveUp, window, cx| {
+                if this.live_move(LiveMove::Up, window, cx) {
+                    cx.stop_propagation();
+                }
+            }))
+            .capture_action(cx.listener(|this, _: &MoveDown, window, cx| {
+                if this.live_move(LiveMove::Down, window, cx) {
+                    cx.stop_propagation();
+                }
+            }))
+            .capture_action(cx.listener(|this, _: &MoveLeft, window, cx| {
+                if this.live_move(LiveMove::Left, window, cx) {
+                    cx.stop_propagation();
+                }
+            }))
+            .capture_action(cx.listener(|this, _: &MoveRight, window, cx| {
+                if this.live_move(LiveMove::Right, window, cx) {
+                    cx.stop_propagation();
+                }
+            }))
+            .capture_action(cx.listener(|this, _: &Backspace, window, cx| {
+                if this.live_join(true, window, cx) {
+                    cx.stop_propagation();
+                }
+            }))
+            .capture_action(cx.listener(|this, _: &Delete, window, cx| {
+                if this.live_join(false, window, cx) {
+                    cx.stop_propagation();
+                }
+            }))
+            .capture_action(cx.listener(|this, _: &Undo, window, cx| {
+                if this.live_history(false, window, cx) {
+                    cx.stop_propagation();
+                }
+            }))
+            .capture_action(cx.listener(|this, _: &Redo, window, cx| {
+                if this.live_history(true, window, cx) {
+                    cx.stop_propagation();
+                }
+            }))
+            .capture_action(cx.listener(|this, action: &Enter, window, cx| {
+                if !action.secondary
+                    && !action.shift
+                    && this.smart_key(smart_edit::enter, window, cx)
+                {
+                    cx.stop_propagation();
+                }
+            }))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, event: &MouseDownEvent, _, _| {
+                    this.live_press = Some(event.position);
+                }),
+            )
+            .capture_any_mouse_up(cx.listener(|_, event: &MouseUpEvent, window, cx| {
+                if event.button != MouseButton::Left {
+                    return;
+                }
+                // After the preview has placed its selection and noted any
+                // link clicked (which stops the event short of a listener
+                // here), but before the link is followed.
+                let document = cx.entity().downgrade();
+                window.defer(cx, move |window, cx| {
+                    _ = document.update(cx, |this, cx| this.live_click(window, cx));
+                });
+            }))
+            .child(content)
+    }
+
     /// A pane fills the view unless the editor and preview share it, in
     /// which case its last measured width is used.
     fn pane_width(&self, measured: Pixels, window: &Window, cx: &App) -> Pixels {
@@ -1328,6 +1955,19 @@ impl DocumentView {
 
 impl Render for DocumentView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Shown in Live Preview (newly opened, or the layout just chosen):
+        // open the block at the caret.
+        if Self::is_live(cx) && self.live_region.is_none() {
+            let document = cx.entity();
+            window.defer(cx, move |window, cx| {
+                document.update(cx, |this, cx| {
+                    if Self::is_live(cx) && this.live_region.is_none() {
+                        let caret = this.editor.read(cx).cursor();
+                        this.live_open_at(caret, window, cx);
+                    }
+                });
+            });
+        }
         if self.analysis_task.is_none()
             && let Some(anchor) = self.pending_anchor.take()
         {
@@ -1345,6 +1985,7 @@ impl Render for DocumentView {
         match layout {
             Layout::Editor => self.render_editor(window, cx).into_any_element(),
             Layout::Preview => self.render_preview(window, cx).into_any_element(),
+            Layout::Live => self.render_live(window, cx).into_any_element(),
             Layout::Split => h_resizable("document-split")
                 .child(
                     resizable_panel()
