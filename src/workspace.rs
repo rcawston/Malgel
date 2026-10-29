@@ -290,7 +290,11 @@ impl Workspace {
             .unwrap_or(0)
             .min(self.documents.len().saturating_sub(1));
         if !paths.is_empty() {
-            self.open_paths(paths, window, cx);
+            // Once the window is built: one may first ask about unsaved
+            // changes, in a dialog that needs the window.
+            cx.defer_in(window, |this, window, cx| {
+                this.open_paths(paths, window, cx)
+            });
         }
         self.focus_active(window, cx);
         self.sync_file_tree(cx);
