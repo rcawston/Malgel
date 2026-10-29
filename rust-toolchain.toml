@@ -1,0 +1,5 @@
+# The Rust release Malgel is built and tested with. rustup installs it on
+# first build; the CI and release workflows install the same one.
+[toolchain]
+channel = "1.99.1"
+components = ["rustfmt", "clippy"]

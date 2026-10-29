@@ -191,8 +191,9 @@ macOS); [docs/RELEASING.md](docs/RELEASING.md) explains how to open them.
 
 ## Building
 
-Malgel needs a recent stable Rust toolchain (developed with Rust 1.98; 1.94
-is too old for GPUI).
+Malgel builds with Rust 1.99.1, which `rust-toolchain.toml` names: with
+[rustup](https://rustup.rs), the first build installs it. (GPUI needs at
+least 1.98.)
 
 On Linux, install the libraries GPUI needs first (Ubuntu/Debian):
 
