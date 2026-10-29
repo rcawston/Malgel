@@ -1124,6 +1124,46 @@ fn column_align(align: AlignKind) -> ColumnAlign {
     }
 }
 
+/// The table `model` as the editor draws it, with `active` in the cell
+/// being edited, and every other cell a leaf of its own. A leaf is laid out
+/// even when empty, so a row of empty cells keeps the height of a line.
+fn table_with(
+    model: &TableModel,
+    active: Option<&Paragraph>,
+    highlight: Hsla,
+) -> (BlockNode, Vec<Cell>) {
+    let mut rows = Vec::with_capacity(model.rows.len());
+    let mut leaves = Vec::new();
+    for (row_ix, row) in model.rows.iter().enumerate() {
+        let mut cells = Vec::with_capacity(row.len());
+        for (col, cell) in row.iter().enumerate() {
+            if let Some(active) = active.filter(|_| (row_ix, col) == model.active) {
+                cells.push(active.clone());
+                continue;
+            }
+            let analysis = live_inline::analyze(&cell.text, Mode::Prose);
+            let shown = Display::new(&cell.text, &analysis, None);
+            let key = cell_leaf(row_ix, col);
+            cells.push(paragraph(&shown, key, highlight));
+            leaves.push(Cell {
+                key,
+                row: row_ix,
+                col,
+                start: cell.range.start,
+                display: shown,
+            });
+        }
+        rows.push(cells);
+    }
+    let aligns = model.aligns.iter().copied().map(column_align).collect();
+    (BlockNode::Table(Table::new(rows, aligns)), leaves)
+}
+
+/// The table `model`, with no cell being edited, as the editor draws it.
+pub fn table(model: &TableModel, highlight: Hsla) -> BlockNode {
+    table_with(model, None, highlight).0
+}
+
 impl Render for LiveEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focused = self.focus_handle.is_focused(window) && !self.concealed;
@@ -1156,30 +1196,9 @@ impl Render for LiveEditor {
                 Neighbor::None,
             ),
             Frame::Table(model) => {
-                let mut rows = Vec::with_capacity(model.rows.len());
-                for (row_ix, row) in model.rows.iter().enumerate() {
-                    let mut cells = Vec::with_capacity(row.len());
-                    for (col, cell) in row.iter().enumerate() {
-                        if (row_ix, col) == model.active {
-                            cells.push(text.clone());
-                            continue;
-                        }
-                        let analysis = live_inline::analyze(&cell.text, Mode::Prose);
-                        let shown = Display::new(&cell.text, &analysis, None);
-                        let key = cell_leaf(row_ix, col);
-                        cells.push(paragraph(&shown, key, highlight));
-                        self.cells.push(Cell {
-                            key,
-                            row: row_ix,
-                            col,
-                            start: cell.range.start,
-                            display: shown,
-                        });
-                    }
-                    rows.push(cells);
-                }
-                let aligns = model.aligns.iter().copied().map(column_align).collect();
-                (BlockNode::Table(Table::new(rows, aligns)), Neighbor::None)
+                let (table, cells) = table_with(model, Some(&text), highlight);
+                self.cells = cells;
+                (table, Neighbor::None)
             }
         };
         let element = render_after(&block, before, &render, window, cx);

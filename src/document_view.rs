@@ -166,6 +166,9 @@ pub struct DocumentView {
     editor_scroll_target: Option<EditorScrollTarget>,
     /// Row count of the preview when it was last aligned.
     synced_preview_rows: usize,
+    /// In Live Preview, the text the preview last rendered and its
+    /// top-level blocks.
+    live_rows: Option<(String, Vec<Range<usize>>)>,
     /// Measured widths used to center the text column.
     editor_width: Pixels,
     preview_width: Pixels,
@@ -214,6 +217,7 @@ impl DocumentView {
             // A re-parse can rebuild the preview's rows, which resets its
             // scroll position; realign once the new rows exist.
             cx.observe(&preview, |this, preview, cx| {
+                this.keep_live_rows(&preview, cx);
                 let rows = preview.read(cx).list_state().item_count();
                 if rows != this.synced_preview_rows {
                     this.sync_preview(true, cx);
@@ -289,6 +293,7 @@ impl DocumentView {
             synced_preview_scroll: None,
             editor_scroll_target: None,
             synced_preview_rows: 0,
+            live_rows: None,
             editor_width: px(0.),
             preview_width: px(0.),
             _subscriptions: subscriptions,
@@ -859,6 +864,47 @@ impl DocumentView {
         self.live_editable = Some(editable);
         self.reparse_preview();
         cx.notify();
+    }
+
+    /// A parse that changes how many top-level blocks there are rebuilds the
+    /// preview's rows, scrolled back to the top. In Live Preview, where the
+    /// preview is what's scrolled, tell the rows which blocks changed first,
+    /// so the rest keep their place and the scroll position.
+    fn keep_live_rows(&mut self, preview: &Entity<TextViewState>, cx: &mut Context<Self>) {
+        if !Self::is_live(cx) {
+            self.live_rows = None;
+            return;
+        }
+        let preview = preview.read(cx);
+        let rendered = preview.rendered_text();
+        let source = rendered.source();
+        if self
+            .live_rows
+            .as_ref()
+            .is_some_and(|(text, _)| text == source)
+        {
+            return;
+        }
+        let blocks = live::blocks(source);
+        let Some((old_source, old)) = self.live_rows.replace((source.to_string(), blocks.clone()))
+        else {
+            return;
+        };
+        let new = &blocks;
+        let list = preview.list_state();
+        if old.len() == new.len() || list.item_count() != old.len() {
+            return;
+        }
+        let (replaced, count) = live::changed_blocks(&old_source, &old, source, new);
+        // Measured again in place, the rows keep an offset inside them.
+        if !replaced.is_empty() {
+            list.remeasure_items(replaced.clone());
+        }
+        if count > replaced.len() {
+            list.splice(replaced.end..replaced.end, count - replaced.len());
+        } else {
+            list.splice(replaced.start + count..replaced.end, 0);
+        }
     }
 
     fn live_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {

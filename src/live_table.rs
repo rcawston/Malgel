@@ -28,10 +28,18 @@ pub struct TableModel {
 /// The table `node` (from `source`, which starts at `offset` in the
 /// document) with the cell `editable` edits.
 pub fn model(node: &Node, source: &str, offset: usize, editable: &Editable) -> Option<TableModel> {
-    let Node::Table(table) = node else {
+    let Target::Cell { row, col, .. } = editable.target else {
         return None;
     };
-    let Target::Cell { row, col, .. } = editable.target else {
+    let mut model = shown(node, source, offset)?;
+    model.active = (row, col);
+    Some(model)
+}
+
+/// The table `node` (from `source`, which starts at `offset` in the
+/// document) with no cell being edited.
+pub fn shown(node: &Node, source: &str, offset: usize) -> Option<TableModel> {
+    let Node::Table(table) = node else {
         return None;
     };
     let rows = table
@@ -57,8 +65,20 @@ pub fn model(node: &Node, source: &str, offset: usize, editable: &Editable) -> O
     Some(TableModel {
         rows,
         aligns: table.align.clone(),
-        active: (row, col),
+        active: NO_CELL,
     })
+}
+
+/// What [`TableModel::active`] is when no cell is being edited.
+pub const NO_CELL: (usize, usize) = (usize::MAX, usize::MAX);
+
+impl TableModel {
+    /// Whether a row has nothing in any of its cells.
+    pub fn has_empty_row(&self) -> bool {
+        self.rows
+            .iter()
+            .any(|row| row.iter().all(|cell| cell.text.trim().is_empty()))
+    }
 }
 
 /// The table in `source` that `editable` (a cell) is in.

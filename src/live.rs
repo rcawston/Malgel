@@ -50,6 +50,36 @@ pub fn blocks(source: &str) -> Vec<Range<usize>> {
         .collect()
 }
 
+/// Which of the top-level blocks `old` (of `old_source`) an edit replaced,
+/// and how many of the blocks `new` (of `new_source`) took their place:
+/// those before and after it are the same text in the same place.
+pub fn changed_blocks(
+    old_source: &str,
+    old: &[Range<usize>],
+    new_source: &str,
+    new: &[Range<usize>],
+) -> (Range<usize>, usize) {
+    fn text<'a>(source: &'a str, range: &Range<usize>) -> &'a str {
+        source.get(range.clone()).unwrap_or_default()
+    }
+    let before = old
+        .iter()
+        .zip(new)
+        .take_while(|(a, b)| a == b && text(old_source, a) == text(new_source, b))
+        .count();
+    let shift = new_source.len() as isize - old_source.len() as isize;
+    let after = old[before..]
+        .iter()
+        .rev()
+        .zip(new[before..].iter().rev())
+        .take_while(|(a, b)| {
+            a.start as isize + shift == b.start as isize
+                && text(old_source, a) == text(new_source, b)
+        })
+        .count();
+    (before..old.len() - after, new.len() - before - after)
+}
+
 // -------------------------------------------------------------------------
 // What can be edited
 
@@ -897,6 +927,60 @@ impl LiveBlockPlugin {
     }
 }
 
+/// In Live Preview, draws a table with a row of empty cells as the editor
+/// draws a table, where an empty cell still takes a line, so the row keeps
+/// its height whether or not the table is being edited.
+pub struct TablePlugin {
+    state: Arc<LiveState>,
+}
+
+impl TablePlugin {
+    pub fn new(state: Arc<LiveState>) -> Self {
+        Self { state }
+    }
+}
+
+impl MarkdownPlugin for TablePlugin {
+    fn is_block(&self) -> bool {
+        true
+    }
+
+    fn name(&self) -> &str {
+        "live-table"
+    }
+
+    fn parse(&self, node: &Node, cx: &MarkdownParseContext<'_>) -> Option<MarkdownNode> {
+        self.state.get()?;
+        let model = live_table::shown(node, cx.source(), cx.offset())?;
+        if !model.has_empty_row() {
+            return None;
+        }
+        let text = cx.node_source(node).unwrap_or_default().to_string();
+        Some(MarkdownNode::new("live-table", model).markdown(text))
+    }
+
+    fn render(&self, node: &MarkdownNode, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let Some(model) = node.data::<live_table::TableModel>() else {
+            return div().into_any_element();
+        };
+        let highlight = gpui_kit::component::ActiveTheme::theme(cx)
+            .warning
+            .opacity(0.3);
+        let block = crate::live_editor::table(model, highlight);
+        let render = crate::live_editor::render_context(window, cx);
+        div()
+            .w_full()
+            .child(crate::live_editor::render_after(
+                &block,
+                Neighbor::None,
+                &render,
+                window,
+                cx,
+            ))
+            .into_any_element()
+    }
+}
+
 /// Draws the editor in the empty paragraph of a nested view.
 pub struct PlaceholderPlugin {
     preview: WeakEntity<TextViewState>,
@@ -942,6 +1026,20 @@ mod tests {
     fn text_at(offset: usize) -> (String, Target) {
         let editable = editable_at(DOC, offset);
         (DOC[editable.range.clone()].to_string(), editable.target)
+    }
+
+    #[test]
+    fn finds_changed_blocks() {
+        let changed = |old: &str, new: &str| changed_blocks(old, &blocks(old), new, &blocks(new));
+        // Typing on a blank line adds a paragraph between the two.
+        assert_eq!(changed("A\n\n\n\nB\n", "A\n\nx\n\nB\n"), (1..1, 1));
+        // Typing in a paragraph changes only it.
+        assert_eq!(changed("A\n\nB\n\nC\n", "A\n\nBx\n\nC\n"), (1..2, 1));
+        // Splitting a paragraph.
+        assert_eq!(changed("A\n\nBC\n\nD\n", "A\n\nB\n\nC\n\nD\n"), (1..2, 2));
+        // Joining the last two.
+        assert_eq!(changed("A\n\nB\n\nC", "A\n\nBC"), (1..3, 1));
+        assert_eq!(changed("", "x"), (0..0, 1));
     }
 
     #[test]

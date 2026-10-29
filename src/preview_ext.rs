@@ -76,22 +76,30 @@ pub fn markdown_extensions(
     // blocks it's editing. A list item or line with nothing in it yet is
     // drawn by a view of its own, with a paragraph for the editor.
     let nested = Arc::new(OnceLock::new());
+    let state = live.clone();
+    let table = || crate::live::TablePlugin::new(state.clone());
     let live = crate::live::LiveBlockPlugin::new(
         live.clone(),
         preview.downgrade(),
         nested.clone(),
         env.clone(),
     );
-    let extensions = with_math(MarkdownExtensions::default().frontmatter().plugin(live))
-        .plugin(gpui_kit::component::text::FrontmatterPlugin::new())
-        .plugin(alert);
+    let extensions = with_math(
+        MarkdownExtensions::default()
+            .frontmatter()
+            .plugin(live)
+            .plugin(table()),
+    )
+    .plugin(gpui_kit::component::text::FrontmatterPlugin::new())
+    .plugin(alert);
     _ = full.set(extensions.clone());
     let placeholder = crate::live::PlaceholderPlugin::new(preview.downgrade());
     _ = nested.set(
         with_math(
             MarkdownExtensions::default()
                 .frontmatter()
-                .plugin(placeholder),
+                .plugin(placeholder)
+                .plugin(table()),
         )
         .plugin(gpui_kit::component::text::FrontmatterPlugin::new())
         .plugin(AlertPlugin {
