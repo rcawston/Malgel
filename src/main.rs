@@ -3,6 +3,17 @@
 // Keep release builds on Windows from opening a console window.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+// Interface text in the user's language: `tr!("key")`, with `%{name}`
+// placeholders filled as `tr!("key", name = value)`.
+rust_i18n::i18n!("locales", fallback = "en");
+
+/// Translated interface text for `key`, as a `SharedString`.
+macro_rules! tr {
+    ($($all:tt)*) => {
+        gpui_kit::SharedString::from(rust_i18n::t!($($all)*).into_owned())
+    };
+}
+
 mod actions;
 mod analysis;
 mod default_app;
@@ -16,6 +27,7 @@ mod file_tree;
 mod format;
 mod html_block;
 mod html_inline;
+mod i18n;
 mod images;
 mod links;
 mod math;

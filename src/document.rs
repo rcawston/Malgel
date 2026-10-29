@@ -39,12 +39,8 @@ pub struct LoadedText {
 /// Read a UTF-8 text file. A byte-order mark is dropped.
 pub fn load(path: &Path) -> io::Result<LoadedText> {
     let bytes = fs::read(path)?;
-    let text = String::from_utf8(bytes).map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "The file isn’t valid UTF-8 text.",
-        )
-    })?;
+    let text = String::from_utf8(bytes)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, tr!("error.utf8").to_string()))?;
     let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
     let line_ending = LineEnding::detect(text);
     let text = match line_ending {
@@ -109,7 +105,7 @@ pub fn is_markdown_path(path: &Path) -> bool {
 pub fn display_name(path: Option<&PathBuf>) -> String {
     path.and_then(|path| path.file_name())
         .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "Untitled".to_string())
+        .unwrap_or_else(|| tr!("doc.untitled").to_string())
 }
 
 #[cfg(test)]

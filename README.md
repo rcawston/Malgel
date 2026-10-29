@@ -23,6 +23,10 @@ A fast, native Markdown editor and previewer written in pure Rust with
   and `data:` URLs.
 - **GitHub alerts.** `> [!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]` and
   `[!CAUTION]` render as themed callouts.
+- **In your language.** The interface is in English, French, Spanish,
+  Simplified Chinese and Japanese, following the system's language or the
+  one picked in Settings. The translations are new; corrections are welcome
+  (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 - **Inline HTML.** `<small>`, `<sub>`, `<sup>`, `<kbd>`, `<mark>`, `<ins>`,
   `<abbr title>`, `<code>`, `<cite>`, `<q>` and colored `<span>`/`<font>`
   render as they would in a browser, alongside `<b>`, `<i>`, `<u>`, `<s>` and
@@ -272,6 +276,7 @@ dictionaries and on macOS those in `~/Library/Spelling` are found too.
 | `src/diagram_viewer.rs` | The window that shows a diagram larger, to zoom and move around |
 | `src/links.rs` | Where links in the preview lead: headings, documents, files, the web |
 | `src/html_inline.rs` | Inline HTML tags in the preview, and pairing them up for exports |
+| `src/i18n.rs`, `locales/app.yml` | The interface's language and its text in each language |
 | `src/html_block.rs` | HTML sections (`<details>`, aligned blocks) in the preview and exports, and safe HTML for HTML export |
 | `src/menus.rs`, `src/actions.rs` | Menus, actions and key bindings |
 | `src/settings.rs`, `src/themes.rs` | Preferences and theme application |

@@ -28,6 +28,7 @@ use gpui_kit::{
         input::Escape,
         link::Link,
         menu::AppMenuBar,
+        menu::{DropdownMenu as _, PopupMenuItem},
         notification::Notification,
         radio::RadioGroup,
         resizable::{h_resizable, resizable_panel},
@@ -49,7 +50,7 @@ use crate::{
     document_view::{DocumentEvent, DocumentView},
     docx, export,
     file_tree::{FileTree, FileTreeEvent},
-    format,
+    format, i18n,
     links::{self, LinkTarget},
     pdf::{self, Paper},
     rich_copy,
@@ -256,9 +257,9 @@ impl Workspace {
         }
         if recovered > 0 {
             let message = if recovered == 1 {
-                "Recovered unsaved changes from the last session.".to_string()
+                tr!("notify.recovered_one").to_string()
             } else {
-                format!("Recovered unsaved changes to {recovered} documents.")
+                tr!("notify.recovered_many", count = recovered).to_string()
             };
             // The window can show notifications once it has finished opening.
             window.defer(cx, move |window, cx| {
@@ -491,7 +492,7 @@ impl Workspace {
                         settings.recent_files.retain(|recent| recent != &path)
                     });
                     this.notify_error(
-                        format!("Couldn’t open “{}”. {err}", display_name(Some(&path))),
+                        tr!("error.open", name = display_name(Some(&path)), error = err),
                         window,
                         cx,
                     );
@@ -681,12 +682,8 @@ impl Workspace {
             DiskChange::Touched(stamp) => doc.update(cx, |doc, _| doc.set_disk_stamp(stamp)),
             DiskChange::Missing => {
                 doc.update(cx, |doc, cx| doc.mark_missing(cx));
-                window.push_notification(
-                    Notification::warning(format!(
-                        "“{name}” was moved or deleted. Save it to keep your text."
-                    )),
-                    cx,
-                );
+                window
+                    .push_notification(Notification::warning(tr!("disk.missing", name = name)), cx);
             }
             DiskChange::Changed {
                 text,
@@ -712,16 +709,14 @@ impl Workspace {
                     let (keep, reload) = (workspace.clone(), workspace.clone());
                     let (reload_doc, text) = (doc.clone(), text.clone());
                     alert
-                        .title(format!("“{name}” changed on disk"))
-                        .description(
-                            "Another program saved this file while you have unsaved changes here.",
-                        )
+                        .title(tr!("disk.changed_title", name = name))
+                        .description(tr!("disk.changed_description"))
                         .footer(
                             DialogFooter::new()
                                 .justify_end()
                                 .child(
                                     Button::new("reload")
-                                        .label("Use the file on disk")
+                                        .label(tr!("disk.use_disk"))
                                         .outline()
                                         .on_click(move |_, window, cx| {
                                             window.close_dialog(cx);
@@ -737,7 +732,7 @@ impl Workspace {
                                 )
                                 .child(
                                     Button::new("keep")
-                                        .label("Keep my changes")
+                                        .label(tr!("disk.keep_mine"))
                                         .primary()
                                         .on_click(move |_, window, cx| {
                                             window.close_dialog(cx);
@@ -794,7 +789,7 @@ impl Workspace {
             files: false,
             directories: true,
             multiple: false,
-            prompt: Some("Open folder".into()),
+            prompt: Some(tr!("dialog.open_folder")),
         });
         cx.spawn_in(window, async move |this, cx| {
             let Ok(Ok(Some(paths))) = paths.await else {
@@ -892,14 +887,14 @@ impl Workspace {
             let (save_next, discard_next) = (next.clone(), next.clone());
             let (save_doc, discard_doc) = (doc.clone(), doc.clone());
             alert
-                .title(format!("Save changes to “{name}”?"))
-                .description("Your changes will be lost if you don’t save them.")
+                .title(tr!("unsaved.title", name = name))
+                .description(tr!("unsaved.description"))
                 .footer(
                     DialogFooter::new()
                         .justify_end()
                         .child(
                             Button::new("discard")
-                                .label("Don’t save")
+                                .label(tr!("unsaved.dont_save"))
                                 .outline()
                                 .on_click(move |_, window, cx| {
                                     window.close_dialog(cx);
@@ -914,26 +909,32 @@ impl Workspace {
                                 }),
                         )
                         .child(div().flex_1())
-                        .child(Button::new("cancel").label("Cancel").outline().on_click(
-                            move |_, window, cx| {
-                                window.close_dialog(cx);
-                                _ = cancel.update(cx, |this, cx| {
-                                    this.discarded.clear();
-                                    this.focus_active(window, cx);
-                                });
-                            },
-                        ))
-                        .child(Button::new("save").label("Save").primary().on_click(
-                            move |_, window, cx| {
-                                window.close_dialog(cx);
-                                let next = save_next.clone();
-                                let doc = save_doc.clone();
-                                _ = save.update(cx, |this, cx| {
-                                    this.focus_active(window, cx);
-                                    this.save_document(doc, Some(next), window, cx)
-                                });
-                            },
-                        )),
+                        .child(
+                            Button::new("cancel")
+                                .label(tr!("button.cancel"))
+                                .outline()
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    _ = cancel.update(cx, |this, cx| {
+                                        this.discarded.clear();
+                                        this.focus_active(window, cx);
+                                    });
+                                }),
+                        )
+                        .child(
+                            Button::new("save")
+                                .label(tr!("button.save"))
+                                .primary()
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    let next = save_next.clone();
+                                    let doc = save_doc.clone();
+                                    _ = save.update(cx, |this, cx| {
+                                        this.focus_active(window, cx);
+                                        this.save_document(doc, Some(next), window, cx)
+                                    });
+                                }),
+                        ),
                 )
         });
     }
@@ -996,11 +997,9 @@ impl Workspace {
                     cx.open_url(&url);
                 }
             }
-            LinkTarget::NeedsSavedDocument => self.notify_error(
-                "Save this document first, so Malgel knows where the files it links to are.",
-                window,
-                cx,
-            ),
+            LinkTarget::NeedsSavedDocument => {
+                self.notify_error(tr!("links.save_first"), window, cx)
+            }
             LinkTarget::File { path, anchor } => {
                 if !path.exists() {
                     // Name the file as the link does, where it can.
@@ -1008,7 +1007,7 @@ impl Workspace {
                         .as_deref()
                         .and_then(|dir| path.strip_prefix(dir).ok())
                         .unwrap_or(&path);
-                    self.notify_error(format!("Couldn’t find “{}”.", shown.display()), window, cx);
+                    self.notify_error(tr!("links.not_found", name = shown.display()), window, cx);
                 } else if path.is_file() && is_markdown_path(&path) {
                     let mut new_tab = AppSettings::get(cx).open_links_in == LinkPlacement::NewTab;
                     if action.alternate {
@@ -1025,7 +1024,11 @@ impl Workspace {
     /// Show a diagram of the active document in a window of its own.
     fn view_diagram(&mut self, action: &ViewDiagram, _: &mut Window, cx: &mut Context<Self>) {
         let name = self.active_document().read(cx).name();
-        diagram_viewer::open(&action.0, format!("Diagram — {name}"), cx);
+        diagram_viewer::open(
+            &action.0,
+            tr!("diagram.window_title", name = name).to_string(),
+            cx,
+        );
     }
 
     /// Show the Markdown file `path` (in a new tab, or in place of the
@@ -1083,7 +1086,7 @@ impl Workspace {
             files: true,
             directories: false,
             multiple: AppSettings::get(cx).tabs,
-            prompt: Some("Open".into()),
+            prompt: Some(tr!("dialog.open")),
         });
         cx.spawn_in(window, async move |this, cx| {
             let Ok(Ok(Some(paths))) = paths.await else {
@@ -1178,9 +1181,10 @@ impl Workspace {
             }
             Err(err) => {
                 self.notify_error(
-                    format!(
-                        "Couldn’t save “{}”. {err}",
-                        display_name(Some(&path.to_path_buf()))
+                    tr!(
+                        "error.save",
+                        name = display_name(Some(&path.to_path_buf())),
+                        error = err
                     ),
                     window,
                     cx,
@@ -1245,8 +1249,8 @@ impl Workspace {
             _ = cx.update(|window, cx| {
                 let name = display_name(Some(&path));
                 let note = match result {
-                    Ok(()) => Notification::success(format!("Exported “{name}”.")),
-                    Err(err) => Notification::error(format!("Couldn’t export “{name}”. {err}")),
+                    Ok(()) => Notification::success(tr!("export.done", name = name)),
+                    Err(err) => Notification::error(tr!("export.failed", name = name, error = err)),
                 };
                 window.push_notification(note, cx);
             });
@@ -1273,8 +1277,8 @@ impl Workspace {
             let html = task.await;
             _ = cx.update(|window, cx| {
                 let note = match rich_copy::copy_html(html, &markdown) {
-                    Ok(()) => Notification::success("Copied as rich text."),
-                    Err(err) => Notification::error(format!("Couldn’t copy. {err}")),
+                    Ok(()) => Notification::success(tr!("copy.rich_done")),
+                    Err(err) => Notification::error(tr!("copy.failed", error = err)),
                 };
                 window.push_notification(note, cx);
             });
@@ -1290,10 +1294,7 @@ impl Workspace {
     ) {
         match self.active_document().read(cx).path().cloned() {
             Some(path) => cx.reveal_path(&path),
-            None => window.push_notification(
-                Notification::info("Save the document to give it a location."),
-                cx,
-            ),
+            None => window.push_notification(Notification::info(tr!("reveal.save_first")), cx),
         }
     }
 
@@ -1320,7 +1321,7 @@ impl Workspace {
                 .update(cx, |doc, cx| doc.drop_images(&paths, window, cx));
             return;
         }
-        self.notify_error("Drop a Markdown or text file to open it.", window, cx);
+        self.notify_error(tr!("drop.not_markdown"), window, cx);
     }
 
     // ---------------------------------------------------------------------
@@ -1367,10 +1368,10 @@ impl Workspace {
             dialog.close_button(false).p_0().child(
                 Command::new(&headings)
                     .bordered(false)
-                    .placeholder("Go to heading")
+                    .placeholder(tr!("heading.placeholder"))
                     .max_h(rems(24.))
                     .items(items)
-                    .empty(|_, _, _| "No headings in this document")
+                    .empty(|_, _, _| tr!("heading.none"))
                     .on_confirm(move |index: IndexPath, window, cx| {
                         window.close_dialog(cx);
                         confirm.update(cx, |doc, cx| doc.reveal_heading(index.row, window, cx));
@@ -1432,7 +1433,7 @@ impl Workspace {
         let workspace = cx.weak_entity();
         let doc = self.active_document().read(cx);
 
-        let layout_button = |id: &'static str, icon: IconName, tooltip: &'static str, value| {
+        let layout_button = |id: &'static str, icon: IconName, tooltip: SharedString, value| {
             Button::new(id)
                 .icon(Icon::new(icon))
                 .tooltip(tooltip)
@@ -1492,19 +1493,19 @@ impl Workspace {
                             .child(layout_button(
                                 "layout-editor",
                                 IconName::PenLine,
-                                "Editor",
+                                tr!("menu.editor"),
                                 Layout::Editor,
                             ))
                             .child(layout_button(
                                 "layout-split",
                                 IconName::Columns2,
-                                "Editor and preview",
+                                tr!("menu.editor_and_preview"),
                                 Layout::Split,
                             ))
                             .child(layout_button(
                                 "layout-preview",
                                 IconName::Eye,
-                                "Preview",
+                                tr!("menu.preview"),
                                 Layout::Preview,
                             ))
                             .on_click(cx.listener(|_, clicked: &Vec<usize>, window, cx| {
@@ -1527,9 +1528,9 @@ impl Workspace {
                                 IconName::Moon
                             }))
                             .tooltip(if is_dark {
-                                "Use light appearance"
+                                tr!("title.light")
                             } else {
-                                "Use dark appearance"
+                                tr!("title.dark")
                             })
                             .on_click(|_, window, cx| {
                                 window.dispatch_action(Box::new(ToggleAppearance), cx)
@@ -1633,7 +1634,7 @@ impl Workspace {
                     .ghost()
                     .xsmall()
                     .icon(Icon::new(IconName::Plus))
-                    .tooltip("New document")
+                    .tooltip(tr!("tabs.new"))
                     .on_click(|_, window, cx| window.dispatch_action(Box::new(NewFile), cx)),
             )
     }
@@ -1677,7 +1678,7 @@ impl Workspace {
                                 .p_3()
                                 .text_sm()
                                 .text_color(theme.muted_foreground)
-                                .child("No headings yet"),
+                                .child(tr!("outline.empty")),
                         )
                     })
                     .children(outline.into_iter().enumerate().map(|(ix, heading)| {
@@ -1730,22 +1731,24 @@ impl Workspace {
             .left(
                 h_flex()
                     .gap_4()
-                    .child(item(format!(
-                        "{} {}",
-                        group_thousands(stats.words),
-                        if stats.words == 1 { "word" } else { "words" }
-                    )))
-                    .child(item(format!(
-                        "{} {}",
-                        group_thousands(stats.characters),
-                        if stats.characters == 1 {
-                            "character"
-                        } else {
-                            "characters"
-                        }
-                    )))
+                    .child(item(if stats.words == 1 {
+                        tr!("status.words_one", count = 1).to_string()
+                    } else {
+                        tr!("status.words_other", count = group_thousands(stats.words)).to_string()
+                    }))
+                    .child(item(if stats.characters == 1 {
+                        tr!("status.chars_one", count = 1).to_string()
+                    } else {
+                        tr!(
+                            "status.chars_other",
+                            count = group_thousands(stats.characters)
+                        )
+                        .to_string()
+                    }))
                     .when(stats.words > 0, |this| {
-                        this.child(item(format!("{} min read", stats.reading_minutes())))
+                        this.child(item(
+                            tr!("status.read", count = stats.reading_minutes()).to_string(),
+                        ))
                     }),
             )
             .right(
@@ -1753,14 +1756,20 @@ impl Workspace {
                     .gap_4()
                     .when(settings.layout.shows_editor(), |this| {
                         this.child(item(if selection.is_empty() {
-                            format!("Ln {}, Col {}", position.line + 1, position.character + 1)
-                        } else {
-                            format!(
-                                "Ln {}, Col {} ({} selected)",
-                                position.line + 1,
-                                position.character + 1,
-                                group_thousands(selection.len())
+                            tr!(
+                                "status.position",
+                                line = position.line + 1,
+                                column = position.character + 1
                             )
+                            .to_string()
+                        } else {
+                            tr!(
+                                "status.position_selected",
+                                line = position.line + 1,
+                                column = position.character + 1,
+                                count = group_thousands(selection.len())
+                            )
+                            .to_string()
                         }))
                     })
                     .when(settings.spell_check, |this| {
@@ -1790,8 +1799,8 @@ pub fn open_settings(window: &mut Window, cx: &mut App) {
         let settings = AppSettings::get(cx).clone();
         let default_status = default_app::status(cx);
         let row = |id: &'static str,
-                   title: &'static str,
-                   description: &'static str,
+                   title: SharedString,
+                   description: SharedString,
                    checked: bool,
                    update: fn(&mut crate::settings::Settings, bool),
                    cx: &App| {
@@ -1819,7 +1828,7 @@ pub fn open_settings(window: &mut Window, cx: &mut App) {
                         }),
                 )
         };
-        let section = |title: &'static str| {
+        let section = |title: SharedString| {
             div()
                 .pt_3()
                 .text_xs()
@@ -1827,75 +1836,76 @@ pub fn open_settings(window: &mut Window, cx: &mut App) {
                 .text_color(cx.theme().muted_foreground)
                 .child(title)
         };
-        dialog.title("Settings").w(px(560.)).child(
+        dialog.title(tr!("settings.title")).w(px(560.)).child(
             v_flex()
-                .child(section("WORKSPACE"))
+                .child(section(tr!("settings.section.workspace")))
+                .child(language_row(settings.language.clone(), cx))
                 .child(row(
                     "tabs",
-                    "Tabs",
-                    "Open documents side by side in tabs instead of one at a time.",
+                    tr!("settings.tabs.title"),
+                    tr!("settings.tabs.description"),
                     settings.tabs,
                     |settings, on| settings.tabs = on,
                     cx,
                 ))
                 .child(row(
                     "file-sidebar",
-                    "File sidebar",
-                    "Browse a folder’s Markdown files beside the editor.",
+                    tr!("settings.sidebar.title"),
+                    tr!("settings.sidebar.description"),
                     settings.file_sidebar,
                     |settings, on| settings.file_sidebar = on,
                     cx,
                 ))
                 .child(row(
                     "outline",
-                    "Outline",
-                    "List the document’s headings beside the editor.",
+                    tr!("settings.outline.title"),
+                    tr!("settings.outline.description"),
                     settings.outline_sidebar,
                     |settings, on| settings.outline_sidebar = on,
                     cx,
                 ))
                 .child(row(
                     "restore-session",
-                    "Reopen last session",
-                    "Start with the documents, folder and window you had open.",
+                    tr!("settings.restore.title"),
+                    tr!("settings.restore.description"),
                     settings.restore_session,
                     |settings, on| settings.restore_session = on,
                     cx,
                 ))
-                .child(section("WRITING"))
+                .child(section(tr!("settings.section.writing")))
                 .child(row(
                     "spell-check",
-                    "Check spelling",
-                    "Underline unknown words; right-click one for suggestions.",
+                    tr!("settings.spell.title"),
+                    tr!("settings.spell.description"),
                     settings.spell_check,
                     |settings, on| settings.spell_check = on,
                     cx,
                 ))
                 .child(row(
                     "scroll-sync",
-                    "Sync scrolling",
-                    "Keep the preview on the part of the document being edited.",
+                    tr!("settings.sync.title"),
+                    tr!("settings.sync.description"),
                     settings.scroll_sync,
                     |settings, on| settings.scroll_sync = on,
                     cx,
                 ))
                 .child(row(
                     "soft-wrap",
-                    "Wrap lines",
-                    "Wrap long lines in the editor instead of scrolling sideways.",
+                    tr!("settings.wrap.title"),
+                    tr!("settings.wrap.description"),
                     settings.soft_wrap,
                     |settings, on| settings.soft_wrap = on,
                     cx,
                 ))
                 .child(row(
                     "line-numbers",
-                    "Line numbers",
-                    "Number the lines in the editor.",
+                    tr!("settings.numbers.title"),
+                    tr!("settings.numbers.description"),
                     settings.line_numbers,
                     |settings, on| settings.line_numbers = on,
                     cx,
                 ))
-                .child(section("LINKS"))
+                .child(section(tr!("settings.section.links")))
                 .child(
                     h_flex()
                         .gap_4()
@@ -1908,24 +1918,24 @@ pub fn open_settings(window: &mut Window, cx: &mut App) {
                                     div()
                                         .text_sm()
                                         .font_weight(FontWeight::MEDIUM)
-                                        .child("Open linked documents in"),
+                                        .child(tr!("settings.links.open_in")),
                                 )
                                 .child(
                                     div()
                                         .text_xs()
                                         .text_color(cx.theme().muted_foreground)
                                         .child(if cfg!(target_os = "macos") {
-                                            "Command-click a link to do the opposite."
+                                            tr!("settings.links.mac_hint")
                                         } else {
-                                            "Ctrl-click a link to do the opposite."
+                                            tr!("settings.links.hint")
                                         }),
                                 ),
                         )
                         .child(
                             RadioGroup::horizontal("open-links-in")
                                 .flex_none()
-                                .child("A new tab")
-                                .child("The same tab")
+                                .child(tr!("settings.links.new_tab"))
+                                .child(tr!("settings.links.same_tab"))
                                 .selected_index(Some(match settings.open_links_in {
                                     LinkPlacement::NewTab => 0,
                                     LinkPlacement::SameTab => 1,
@@ -1944,27 +1954,91 @@ pub fn open_settings(window: &mut Window, cx: &mut App) {
                 )
                 .child(row(
                     "confirm-web-links",
-                    "Ask before opening web links",
-                    "Show where a link leads before it opens in your browser.",
+                    tr!("settings.links.confirm_title"),
+                    tr!("settings.links.confirm_description"),
                     settings.confirm_web_links,
                     |settings, on| settings.confirm_web_links = on,
                     cx,
                 ))
-                .child(section("FILES"))
+                .child(section(tr!("settings.section.files")))
                 .child(default_app_row(default_status, cx)),
         )
     });
+}
+
+/// The settings row that picks the interface language.
+fn language_row(language: Option<String>, cx: &App) -> impl IntoElement {
+    let name = |code: &str| {
+        i18n::LANGUAGES
+            .iter()
+            .find(|(candidate, _)| *candidate == code)
+            .map_or("English", |(_, name)| *name)
+    };
+    let system = tr!(
+        "settings.language.system",
+        language = name(i18n::system_language())
+    );
+    let chosen = language.as_deref().and_then(i18n::supported);
+    let current = chosen.map_or(system.clone(), |code| SharedString::from(name(code)));
+    h_flex()
+        .gap_4()
+        .py_2()
+        .justify_between()
+        .child(
+            v_flex()
+                .gap_0p5()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(tr!("settings.language.title")),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(tr!("settings.language.description")),
+                ),
+        )
+        .child(
+            Button::new("language")
+                .label(current)
+                .small()
+                .outline()
+                .dropdown_caret(true)
+                .dropdown_menu(move |menu, _, _| {
+                    let mut menu = menu.item(
+                        PopupMenuItem::new(system.clone())
+                            .checked(chosen.is_none())
+                            .on_click(|_, _, cx| {
+                                AppSettings::update(cx, |settings| settings.language = None)
+                            }),
+                    );
+                    for (code, name) in i18n::LANGUAGES {
+                        menu = menu.item(
+                            PopupMenuItem::new(name)
+                                .checked(chosen == Some(code))
+                                .on_click(move |_, _, cx| {
+                                    AppSettings::update(cx, |settings| {
+                                        settings.language = Some(code.to_string())
+                                    })
+                                }),
+                        );
+                    }
+                    menu
+                }),
+        )
 }
 
 /// The settings row that makes Malgel the app for Markdown files.
 fn default_app_row(status: default_app::Status, cx: &App) -> impl IntoElement {
     let is_default = status == default_app::Status::Default;
     let description = if is_default {
-        "Markdown files you open from your desktop open in Malgel."
+        tr!("default_app.is_default")
     } else if default_app::CHOSEN_IN_SYSTEM_SETTINGS {
-        "Choose Malgel for Markdown files in Windows Settings."
+        tr!("default_app.windows_hint")
     } else {
-        "Open Markdown files from your desktop in Malgel."
+        tr!("default_app.description")
     };
     let action = if is_default {
         h_flex()
@@ -1972,13 +2046,13 @@ fn default_app_row(status: default_app::Status, cx: &App) -> impl IntoElement {
             .text_sm()
             .text_color(cx.theme().muted_foreground)
             .child(Icon::new(IconName::Check).small())
-            .child("Default")
+            .child(tr!("default_app.default"))
             .into_any_element()
     } else {
         let label = if default_app::CHOSEN_IN_SYSTEM_SETTINGS {
-            "Open Settings…"
+            tr!("default_app.open_settings")
         } else {
-            "Make Default"
+            tr!("default_app.make_default")
         };
         Button::new("make-default")
             .label(label)
@@ -1987,10 +2061,10 @@ fn default_app_row(status: default_app::Status, cx: &App) -> impl IntoElement {
             .on_click(|_, window, cx| {
                 let note = match default_app::make_default(cx) {
                     Ok(default_app::Outcome::Done) => {
-                        Notification::success("Malgel now opens Markdown files.")
+                        Notification::success(tr!("default_app.done"))
                     }
                     Ok(default_app::Outcome::SettingsOpened) => {
-                        Notification::info("In Settings, set Malgel as the default for .md files.")
+                        Notification::info(tr!("default_app.settings_opened"))
                     }
                     Err(message) => Notification::error(message),
                 };
@@ -2010,7 +2084,7 @@ fn default_app_row(status: default_app::Status, cx: &App) -> impl IntoElement {
                     div()
                         .text_sm()
                         .font_weight(FontWeight::MEDIUM)
-                        .child("Default app for Markdown"),
+                        .child(tr!("default_app.title")),
                 )
                 .child(
                     div()
@@ -2034,11 +2108,7 @@ pub fn open_about(window: &mut Window, cx: &mut App) {
             .description(
                 v_flex()
                     .gap_2()
-                    .child(concat!(
-                        "Version ",
-                        env!("CARGO_PKG_VERSION"),
-                        ". A fast, native Markdown editor built with GPUI Kit."
-                    ))
+                    .child(tr!("about.version", version = env!("CARGO_PKG_VERSION")))
                     .child(
                         Link::new("website")
                             .href(WEBSITE)
@@ -2048,10 +2118,10 @@ pub fn open_about(window: &mut Window, cx: &mut App) {
                         div()
                             .text_xs()
                             .text_color(muted)
-                            .child("Licensed under the Apache License, Version 2.0."),
+                            .child(tr!("about.license")),
                     ),
             )
-            .ok_text("OK")
+            .ok_text(tr!("button.ok"))
     });
 }
 
@@ -2068,9 +2138,9 @@ fn confirm_external_link(url: String, window: &mut Window, cx: &mut App) {
         let (checkbox, remember) = (dont_ask.clone(), dont_ask.clone());
         alert
             .title(if web {
-                "Open this link in your browser?"
+                tr!("web_link.title_browser")
             } else {
-                "Open this link?"
+                tr!("web_link.title")
             })
             .description(
                 v_flex()
@@ -2089,7 +2159,7 @@ fn confirm_external_link(url: String, window: &mut Window, cx: &mut App) {
                     .when(web, |this| {
                         this.child(
                             Checkbox::new("dont-ask")
-                                .label("Don’t ask again for web links")
+                                .label(tr!("web_link.dont_ask"))
                                 .checked(dont_ask.get())
                                 .on_click(move |checked, window, _| {
                                     checkbox.set(*checked);
@@ -2103,13 +2173,17 @@ fn confirm_external_link(url: String, window: &mut Window, cx: &mut App) {
                     .justify_end()
                     .child(
                         Button::new("cancel")
-                            .label("Cancel")
+                            .label(tr!("button.cancel"))
                             .outline()
                             .on_click(|_, window, cx| window.close_dialog(cx)),
                     )
                     .child(
                         Button::new("open")
-                            .label(if web { "Open in Browser" } else { "Open" })
+                            .label(if web {
+                                tr!("web_link.open_browser")
+                            } else {
+                                tr!("button.open")
+                            })
                             .primary()
                             .on_click(move |_, window, cx| {
                                 window.close_dialog(cx);
@@ -2139,27 +2213,30 @@ fn confirm_open_file(path: PathBuf, window: &mut Window, cx: &mut App) {
     window.open_alert_dialog(cx, move |alert, _, _| {
         let path = path.clone();
         alert
-            .title(format!("Open “{name}”?"))
+            .title(tr!("file_link.title", name = name))
             .description(if folder {
-                "The folder will open in your file manager."
+                tr!("file_link.folder")
             } else {
-                "Malgel can’t show this file, so it will open in the app your system uses for it."
+                tr!("file_link.other")
             })
             .footer(
                 DialogFooter::new()
                     .justify_end()
                     .child(
                         Button::new("cancel")
-                            .label("Cancel")
+                            .label(tr!("button.cancel"))
                             .outline()
                             .on_click(|_, window, cx| window.close_dialog(cx)),
                     )
-                    .child(Button::new("open").label("Open").primary().on_click(
-                        move |_, window, cx| {
-                            window.close_dialog(cx);
-                            cx.open_with_system(&path);
-                        },
-                    )),
+                    .child(
+                        Button::new("open")
+                            .label(tr!("button.open"))
+                            .primary()
+                            .on_click(move |_, window, cx| {
+                                window.close_dialog(cx);
+                                cx.open_with_system(&path);
+                            }),
+                    ),
             )
     });
 }
@@ -2211,7 +2288,7 @@ fn suggested_file_name(analysis: &Analysis, extension: &str) -> String {
                 .to_string()
         })
         .filter(|stem| !stem.is_empty())
-        .unwrap_or_else(|| "Untitled".to_string());
+        .unwrap_or_else(|| tr!("doc.untitled").to_string());
     format!("{stem}.{extension}")
 }
 

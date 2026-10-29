@@ -45,10 +45,19 @@ impl AppSettings {
                 || current.dark_theme != settings.dark_theme
                 || current.font_size != settings.font_size
         };
+        let language_changed = Self::get(cx).language != settings.language;
         settings.save();
+        // Before the global changes, so the menus rebuilt for it are in the
+        // new language.
+        if language_changed {
+            crate::i18n::apply(&settings);
+        }
         cx.set_global(AppSettings(settings));
         if appearance_changed {
             apply(None, cx);
+        }
+        if language_changed {
+            cx.refresh_windows();
         }
     }
 }
@@ -60,6 +69,7 @@ pub fn init(settings: Settings, cx: &mut App) {
             eprintln!("malgel: could not load a bundled theme: {err}");
         }
     }
+    crate::i18n::apply(&settings);
     cx.set_global(AppSettings(settings));
     apply(None, cx);
 }

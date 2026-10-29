@@ -51,17 +51,17 @@ fn update(app_menu_bar: &Entity<AppMenuBar>, cx: &mut App) {
 #[cfg(test)]
 const MAX_MENU_ITEMS: usize = 20;
 
-fn submenu(name: &str, items: Vec<MenuItem>) -> MenuItem {
+fn submenu(name: impl Into<SharedString>, items: Vec<MenuItem>) -> MenuItem {
     MenuItem::Submenu(Menu {
-        name: SharedString::from(name.to_string()),
+        name: name.into(),
         items,
         disabled: false,
     })
 }
 
-fn menu(name: &str, items: Vec<MenuItem>) -> Menu {
+fn menu(name: impl Into<SharedString>, items: Vec<MenuItem>) -> Menu {
     Menu {
-        name: SharedString::from(name.to_string()),
+        name: name.into(),
         items,
         disabled: false,
     }
@@ -72,7 +72,7 @@ pub fn build(cx: &App) -> Vec<Menu> {
     let macos = cfg!(target_os = "macos");
 
     let recent: Vec<MenuItem> = if settings.recent_files.is_empty() {
-        vec![MenuItem::action("No recent files", OpenRecent(0)).disabled(true)]
+        vec![MenuItem::action(tr!("menu.no_recent"), OpenRecent(0)).disabled(true)]
     } else {
         settings
             .recent_files
@@ -91,72 +91,74 @@ pub fn build(cx: &App) -> Vec<Menu> {
     };
 
     let mut file = vec![
-        MenuItem::action("New", NewFile),
-        MenuItem::action("Open…", Open),
-        MenuItem::action("Open folder…", OpenFolder),
-        submenu("Open recent", recent),
+        MenuItem::action(tr!("menu.new"), NewFile),
+        MenuItem::action(tr!("menu.open"), Open),
+        MenuItem::action(tr!("menu.open_folder"), OpenFolder),
+        submenu(tr!("menu.open_recent"), recent),
         MenuItem::separator(),
-        MenuItem::action("Save", Save),
-        MenuItem::action("Save as…", SaveAs),
+        MenuItem::action(tr!("menu.save"), Save),
+        MenuItem::action(tr!("menu.save_as"), SaveAs),
         MenuItem::separator(),
-        MenuItem::action("Export as HTML…", ExportHtml),
-        MenuItem::action("Export as PDF…", ExportPdf),
-        MenuItem::action("Export as Word document…", ExportDocx),
+        MenuItem::action(tr!("menu.export_html"), ExportHtml),
+        MenuItem::action(tr!("menu.export_pdf"), ExportPdf),
+        MenuItem::action(tr!("menu.export_docx"), ExportDocx),
         MenuItem::separator(),
         MenuItem::action(
             if macos {
-                "Reveal in Finder"
+                tr!("menu.reveal_finder")
             } else {
-                "Show in folder"
+                tr!("menu.show_in_folder")
             },
             RevealInFolder,
         ),
         MenuItem::separator(),
-        MenuItem::action("Close", CloseDocument),
-        MenuItem::action("Close window", CloseWindow),
+        MenuItem::action(tr!("menu.close"), CloseDocument),
+        MenuItem::action(tr!("menu.close_window"), CloseWindow),
     ];
     if !macos {
-        file.push(MenuItem::action("Quit", Quit));
+        file.push(MenuItem::action(tr!("menu.quit"), Quit));
     }
 
     let mut edit = vec![
-        MenuItem::action("Undo", Undo),
-        MenuItem::action("Redo", Redo),
+        MenuItem::action(tr!("menu.undo"), Undo),
+        MenuItem::action(tr!("menu.redo"), Redo),
         MenuItem::separator(),
-        MenuItem::action("Cut", Cut),
-        MenuItem::action("Copy", Copy),
-        MenuItem::action("Copy as rich text", CopyRichText),
-        MenuItem::action("Paste", Paste),
-        MenuItem::action("Select all", SelectAll),
+        MenuItem::action(tr!("menu.cut"), Cut),
+        MenuItem::action(tr!("menu.copy"), Copy),
+        MenuItem::action(tr!("menu.copy_rich"), CopyRichText),
+        MenuItem::action(tr!("menu.paste"), Paste),
+        MenuItem::action(tr!("menu.select_all"), SelectAll),
         MenuItem::separator(),
-        MenuItem::action("Find…", Search),
-        MenuItem::action("Replace…", Replace),
+        MenuItem::action(tr!("menu.find"), Search),
+        MenuItem::action(tr!("menu.replace"), Replace),
     ];
     if !macos {
         edit.push(MenuItem::separator());
-        edit.push(MenuItem::action("Settings…", OpenSettings));
+        edit.push(MenuItem::action(tr!("menu.settings"), OpenSettings));
     }
 
     let format = vec![
-        MenuItem::action("Bold", Bold),
-        MenuItem::action("Italic", Italic),
-        MenuItem::action("Strikethrough", Strikethrough),
-        MenuItem::action("Inline code", InlineCode),
-        MenuItem::action("Link", InsertLink),
+        MenuItem::action(tr!("menu.bold"), Bold),
+        MenuItem::action(tr!("menu.italic"), Italic),
+        MenuItem::action(tr!("menu.strikethrough"), Strikethrough),
+        MenuItem::action(tr!("menu.inline_code"), InlineCode),
+        MenuItem::action(tr!("menu.link"), InsertLink),
         MenuItem::separator(),
         submenu(
-            "Heading",
+            tr!("menu.heading"),
             (1..=6)
-                .map(|level| MenuItem::action(format!("Heading {level}"), Heading(level)))
+                .map(|level| {
+                    MenuItem::action(tr!("menu.heading_level", level = level), Heading(level))
+                })
                 .collect(),
         ),
-        MenuItem::action("Quote", Quote),
-        MenuItem::action("Bulleted list", BulletList),
-        MenuItem::action("Numbered list", NumberedList),
-        MenuItem::action("Task list", TaskList),
-        MenuItem::action("Code block", CodeBlock),
+        MenuItem::action(tr!("menu.quote"), Quote),
+        MenuItem::action(tr!("menu.bulleted_list"), BulletList),
+        MenuItem::action(tr!("menu.numbered_list"), NumberedList),
+        MenuItem::action(tr!("menu.task_list"), TaskList),
+        MenuItem::action(tr!("menu.code_block"), CodeBlock),
         MenuItem::separator(),
-        MenuItem::action("Tidy table", TidyTable),
+        MenuItem::action(tr!("menu.tidy_table"), TidyTable),
     ];
 
     let current_language = settings
@@ -164,7 +166,8 @@ pub fn build(cx: &App) -> Vec<Menu> {
         .clone()
         .unwrap_or_else(spell::default_language);
     let mut spelling = vec![
-        MenuItem::action("Check spelling", ToggleSpellCheck).checked(settings.spell_check),
+        MenuItem::action(tr!("menu.check_spelling"), ToggleSpellCheck)
+            .checked(settings.spell_check),
         MenuItem::separator(),
     ];
     spelling.extend(spell::available_languages().into_iter().map(|language| {
@@ -194,50 +197,56 @@ pub fn build(cx: &App) -> Vec<Menu> {
     };
 
     let view = vec![
-        MenuItem::action("Editor", SetLayout(Layout::Editor))
+        MenuItem::action(tr!("menu.editor"), SetLayout(Layout::Editor))
             .checked(settings.layout == Layout::Editor),
-        MenuItem::action("Editor and preview", SetLayout(Layout::Split))
+        MenuItem::action(tr!("menu.editor_and_preview"), SetLayout(Layout::Split))
             .checked(settings.layout == Layout::Split),
-        MenuItem::action("Preview", SetLayout(Layout::Preview))
+        MenuItem::action(tr!("menu.preview"), SetLayout(Layout::Preview))
             .checked(settings.layout == Layout::Preview),
-        MenuItem::action("Focus mode", ToggleFocusMode).checked(settings.focus_mode),
+        MenuItem::action(tr!("menu.focus_mode"), ToggleFocusMode).checked(settings.focus_mode),
         MenuItem::separator(),
-        MenuItem::action("Tabs", ToggleTabs).checked(settings.tabs),
-        MenuItem::action("File sidebar", ToggleFileSidebar).checked(settings.file_sidebar),
-        MenuItem::action("Outline", ToggleOutline).checked(settings.outline_sidebar),
-        MenuItem::action("Go to heading…", GoToHeading),
+        MenuItem::action(tr!("menu.tabs"), ToggleTabs).checked(settings.tabs),
+        MenuItem::action(tr!("menu.file_sidebar"), ToggleFileSidebar)
+            .checked(settings.file_sidebar),
+        MenuItem::action(tr!("menu.outline"), ToggleOutline).checked(settings.outline_sidebar),
+        MenuItem::action(tr!("menu.go_to_heading"), GoToHeading),
         MenuItem::separator(),
-        MenuItem::action("Sync scrolling", ToggleScrollSync).checked(settings.scroll_sync),
-        MenuItem::action("Wrap lines", ToggleSoftWrap).checked(settings.soft_wrap),
-        MenuItem::action("Line numbers", ToggleLineNumbers).checked(settings.line_numbers),
-        submenu("Spelling", spelling),
+        MenuItem::action(tr!("menu.sync_scrolling"), ToggleScrollSync)
+            .checked(settings.scroll_sync),
+        MenuItem::action(tr!("menu.wrap_lines"), ToggleSoftWrap).checked(settings.soft_wrap),
+        MenuItem::action(tr!("menu.line_numbers"), ToggleLineNumbers)
+            .checked(settings.line_numbers),
+        submenu(tr!("menu.spelling"), spelling),
         MenuItem::separator(),
-        MenuItem::action("Zoom in", ZoomIn),
-        MenuItem::action("Zoom out", ZoomOut),
-        MenuItem::action("Actual size", ZoomReset),
+        MenuItem::action(tr!("menu.zoom_in"), ZoomIn),
+        MenuItem::action(tr!("menu.zoom_out"), ZoomOut),
+        MenuItem::action(tr!("menu.actual_size"), ZoomReset),
         MenuItem::separator(),
         // Themes live in the Appearance submenu: menus with more than
         // MAX_MENU_ITEMS entries turn into small scrolling lists.
         submenu(
-            "Appearance",
+            tr!("menu.appearance"),
             vec![
-                MenuItem::action("System", SetAppearance(Appearance::System))
+                MenuItem::action(tr!("menu.system"), SetAppearance(Appearance::System))
                     .checked(appearance == Appearance::System),
-                MenuItem::action("Light", SetAppearance(Appearance::Light))
+                MenuItem::action(tr!("menu.light"), SetAppearance(Appearance::Light))
                     .checked(appearance == Appearance::Light),
-                MenuItem::action("Dark", SetAppearance(Appearance::Dark))
+                MenuItem::action(tr!("menu.dark"), SetAppearance(Appearance::Dark))
                     .checked(appearance == Appearance::Dark),
                 MenuItem::separator(),
-                submenu("Light theme", theme_items(ThemeMode::Light)),
-                submenu("Dark theme", theme_items(ThemeMode::Dark)),
+                submenu(tr!("menu.light_theme"), theme_items(ThemeMode::Light)),
+                submenu(tr!("menu.dark_theme"), theme_items(ThemeMode::Dark)),
             ],
         ),
     ];
 
-    let mut help = vec![MenuItem::action("Markdown guide", OpenMarkdownGuide)];
+    let mut help = vec![MenuItem::action(
+        tr!("menu.markdown_guide"),
+        OpenMarkdownGuide,
+    )];
     if !macos {
         help.push(MenuItem::separator());
-        help.push(MenuItem::action("About Malgel", About));
+        help.push(MenuItem::action(tr!("menu.about"), About));
     }
 
     let mut menus = Vec::new();
@@ -245,20 +254,20 @@ pub fn build(cx: &App) -> Vec<Menu> {
         menus.push(menu(
             "Malgel",
             vec![
-                MenuItem::action("About Malgel", About),
+                MenuItem::action(tr!("menu.about"), About),
                 MenuItem::separator(),
-                MenuItem::action("Settings…", OpenSettings),
+                MenuItem::action(tr!("menu.settings"), OpenSettings),
                 MenuItem::separator(),
-                MenuItem::action("Quit Malgel", Quit),
+                MenuItem::action(tr!("menu.quit_malgel"), Quit),
             ],
         ));
     }
     menus.extend([
-        menu("File", file),
-        menu("Edit", edit),
-        menu("Format", format),
-        menu("View", view),
-        menu("Help", help),
+        menu(tr!("menu.file"), file),
+        menu(tr!("menu.edit"), edit),
+        menu(tr!("menu.format"), format),
+        menu(tr!("menu.view"), view),
+        menu(tr!("menu.help"), help),
     ]);
     menus
 }

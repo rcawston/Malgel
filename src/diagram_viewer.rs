@@ -474,7 +474,7 @@ impl DiagramViewer {
                     .small()
                     .compact()
                     .icon(Icon::new(IconName::ZoomOut))
-                    .tooltip("Zoom out")
+                    .tooltip(tr!("menu.zoom_out"))
                     .disabled(!ready)
                     .on_click(cx.listener(|this, _, _, cx| this.zoom_by(1. / ZOOM_STEP, None, cx))),
             )
@@ -484,7 +484,7 @@ impl DiagramViewer {
                     .small()
                     .compact()
                     .label(percent)
-                    .tooltip("Actual size")
+                    .tooltip(tr!("menu.actual_size"))
                     .disabled(!ready)
                     .on_click(cx.listener(|this, _, _, cx| this.set_zoom(1., cx))),
             )
@@ -494,7 +494,7 @@ impl DiagramViewer {
                     .small()
                     .compact()
                     .icon(Icon::new(IconName::ZoomIn))
-                    .tooltip("Zoom in")
+                    .tooltip(tr!("menu.zoom_in"))
                     .disabled(!ready)
                     .on_click(cx.listener(|this, _, _, cx| this.zoom_by(ZOOM_STEP, None, cx))),
             )
@@ -504,7 +504,7 @@ impl DiagramViewer {
                     .small()
                     .compact()
                     .icon(Icon::new(IconName::Maximize))
-                    .tooltip("Fit to window")
+                    .tooltip(tr!("diagram.fit"))
                     .selected(self.fitted)
                     .disabled(!ready)
                     .on_click(cx.listener(|this, _, _, cx| this.fit(cx))),

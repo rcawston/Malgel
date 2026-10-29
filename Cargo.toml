@@ -62,12 +62,16 @@ base64 = "0.22"
 # Files the system asks Malgel to open arrive on another thread.
 futures = "0.3"
 url = "2"
+# Interface translations (locales/app.yml), with the library GPUI Kit
+# translates its own text with, so one setting switches both.
+rust-i18n = "4.2"
 # The SVG renderer GPUI draws with: the diagram viewer draws the part of a
 # zoomed diagram in view with it, so it stays sharp.
 resvg = { version = "0.46", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
 # System fonts give exported PDFs coverage the bundled fonts lack (CJK, emoji).
 fontdb = "0.23"
-# Picks A4 or US Letter for exports from the system locale.
+# The system locale: the interface's language by default, and A4 or US
+# Letter for exports.
 sys-locale = "0.3"
 # Word export. `image` converts pictures to PNG and `zip` finishes the
 # package; docx-rs already builds both.

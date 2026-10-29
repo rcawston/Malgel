@@ -125,7 +125,7 @@ mod platform {
     }
 
     pub fn make_default(_: &mut gpui_kit::App) -> Result<Outcome, String> {
-        let id = bundle_id().ok_or("Only Malgel.app can become the default app.")?;
+        let id = bundle_id().ok_or_else(|| tr!("default_app.only_bundle").to_string())?;
         let content_type = CFString::new(MARKDOWN_TYPE);
         let handler = CFString::new(&id);
         // SAFETY: both strings outlive the call.
@@ -139,7 +139,7 @@ mod platform {
         if status == 0 {
             Ok(Outcome::Done)
         } else {
-            Err(format!("macOS refused the change (error {status})."))
+            Err(tr!("default_app.refused", status = status).to_string())
         }
     }
 }
@@ -241,7 +241,7 @@ mod platform {
             "registeredAppMachine"
         } else {
             register_for_user()
-                .map_err(|err| format!("Couldn’t register Malgel for Markdown files: {err}"))?;
+                .map_err(|err| tr!("default_app.register_failed", error = err).to_string())?;
             "registeredAppUser"
         };
         // Default apps, on Malgel's own page (Windows 11; Windows 10 shows
@@ -379,7 +379,7 @@ mod platform {
         // and an AppImage's own entry must point at the current AppImage.
         if std::env::var_os("APPIMAGE").is_some() || !installed(DESKTOP_ID) || own_entry.is_file() {
             install_desktop_entry(&applications)
-                .map_err(|err| format!("Couldn’t add Malgel to your applications: {err}"))?;
+                .map_err(|err| tr!("default_app.add_failed", error = err).to_string())?;
         }
 
         let file = config_home()
@@ -390,8 +390,14 @@ mod platform {
         if let Some(dir) = file.parent() {
             std::fs::create_dir_all(dir).map_err(|err| err.to_string())?;
         }
-        std::fs::write(&file, text)
-            .map_err(|err| format!("Couldn’t save {}: {err}", file.display()))?;
+        std::fs::write(&file, text).map_err(|err| {
+            tr!(
+                "default_app.save_failed",
+                file = file.display(),
+                error = err
+            )
+            .to_string()
+        })?;
         Ok(Outcome::Done)
     }
 }
@@ -410,7 +416,7 @@ mod platform {
     }
 
     pub fn make_default(_: &mut gpui_kit::App) -> Result<Outcome, String> {
-        Err("This system has no default apps Malgel knows how to set.".into())
+        Err(tr!("default_app.unsupported").to_string())
     }
 }
 

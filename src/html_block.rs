@@ -766,7 +766,10 @@ impl HtmlBlockPlugin {
                 let is_open = open != toggled;
                 let state = self.toggled.clone();
                 let preview = self.preview.clone();
-                let summary = section.summary.clone().unwrap_or_else(|| "Details".into());
+                let summary = section
+                    .summary
+                    .clone()
+                    .unwrap_or_else(|| tr!("html.details").to_string());
                 v_flex()
                     .w_full()
                     .gap_1()

@@ -10,6 +10,19 @@ instead. Include your operating system and version, the Malgel version
 (Help → About Malgel), and, if something renders wrongly, a small Markdown
 file that shows it.
 
+## Translations
+
+Malgel's interface is in English, French, Spanish, Simplified Chinese and
+Japanese. The translations are new, and corrections from native speakers
+are very welcome. All the text is in [`locales/app.yml`](locales/app.yml):
+each entry lists the English and its translations. Fix one in place, keep
+any `%{placeholder}` as it is, and open a pull request (or an issue with the
+wording you'd suggest).
+
+To add a language, add its code (like `de`) to every entry and to
+`LANGUAGES` in `src/i18n.rs`; `cargo test` checks that no entry is missing
+it.
+
 ## Pull requests
 
 Before opening one, make sure these pass, as CI checks them:

@@ -273,7 +273,7 @@ impl Render for FileTree {
             .as_ref()
             .and_then(|root| root.file_name())
             .map(|name| name.to_string_lossy().to_string())
-            .unwrap_or_else(|| "Files".to_string());
+            .unwrap_or_else(|| tr!("files.title").to_string());
 
         let header = h_flex()
             .h(px(32.))
@@ -290,7 +290,7 @@ impl Render for FileTree {
                     .ghost()
                     .xsmall()
                     .icon(Icon::new(IconName::FolderOpen))
-                    .tooltip("Open folder…")
+                    .tooltip(tr!("menu.open_folder"))
                     .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenFolder), cx)),
             );
 
@@ -303,11 +303,11 @@ impl Render for FileTree {
                 .p_4()
                 .text_sm()
                 .text_color(theme.muted_foreground)
-                .child("No folder open")
+                .child(tr!("files.no_folder"))
                 .child(
                     Button::new("open-folder-empty")
                         .small()
-                        .label("Open folder…")
+                        .label(tr!("menu.open_folder"))
                         .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenFolder), cx)),
                 )
                 .into_any_element()
@@ -316,7 +316,7 @@ impl Render for FileTree {
                 .p_4()
                 .text_sm()
                 .text_color(theme.muted_foreground)
-                .child("No Markdown files here")
+                .child(tr!("files.empty"))
                 .into_any_element()
         } else {
             div()

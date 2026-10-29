@@ -725,7 +725,7 @@ impl MarkdownPlugin for MermaidPlugin {
                                             .icon(Icon::new(IconName::Maximize))
                                             .small()
                                             .outline()
-                                            .tooltip("Open larger")
+                                            .tooltip(tr!("diagram.open_larger"))
                                             .on_click(move |_, window, cx| {
                                                 cx.stop_propagation();
                                                 open_from_button(window, cx)

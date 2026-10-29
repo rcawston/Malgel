@@ -166,7 +166,7 @@ impl DocumentView {
                 })
                 .indent_guides(false)
                 .searchable(true)
-                .placeholder("Start writing…")
+                .placeholder(tr!("editor.placeholder"))
         });
         let preview = cx.new(|cx| TextViewState::markdown("", cx));
 
@@ -579,10 +579,10 @@ impl DocumentView {
                 Diagnostic::new(
                     text.offset_to_position(misspelling.range.start)
                         ..text.offset_to_position(misspelling.range.end),
-                    format!("Unknown word “{}”", misspelling.word),
+                    tr!("spell.unknown", word = misspelling.word),
                 )
                 .with_severity(DiagnosticSeverity::Info)
-                .with_source("Spelling")
+                .with_source(tr!("menu.spelling"))
             }));
             cx.notify();
         });
@@ -626,7 +626,7 @@ impl DocumentView {
             let suggestions = spell::suggest(&dictionary, &misspelling.word);
             if suggestions.is_empty() {
                 menu = menu.menu_with_disabled(
-                    "No suggestions",
+                    tr!("spell.no_suggestions"),
                     true,
                     Box::new(AddToDictionary(misspelling.word.clone().into())),
                 );
@@ -644,18 +644,18 @@ impl DocumentView {
             }
             menu = menu
                 .menu(
-                    format!("Add “{}” to dictionary", misspelling.word),
+                    tr!("spell.add", word = misspelling.word),
                     Box::new(AddToDictionary(misspelling.word.into())),
                 )
                 .separator();
         }
-        menu.menu("Cut", Box::new(Cut))
-            .menu("Copy", Box::new(Copy))
-            .menu("Paste", Box::new(Paste))
+        menu.menu(tr!("menu.cut"), Box::new(Cut))
+            .menu(tr!("menu.copy"), Box::new(Copy))
+            .menu(tr!("menu.paste"), Box::new(Paste))
             .separator()
-            .menu("Copy as rich text", Box::new(CopyRichText))
+            .menu(tr!("menu.copy_rich"), Box::new(CopyRichText))
             .separator()
-            .menu("Select all", Box::new(SelectAll))
+            .menu(tr!("menu.select_all"), Box::new(SelectAll))
     }
 
     // ---------------------------------------------------------------------
@@ -756,9 +756,7 @@ impl DocumentView {
         let selection = self.editor.read(cx).selected_range();
         match smart_edit::tidy_table(&text, selection) {
             Some(edit) => self.apply(edit, window, cx),
-            None => cx.emit(DocumentEvent::Notify(
-                "Put the caret in a table to tidy it.".into(),
-            )),
+            None => cx.emit(DocumentEvent::Notify(tr!("table.no_table"))),
         }
     }
 
@@ -837,9 +835,7 @@ impl DocumentView {
         cx: &mut Context<Self>,
     ) {
         let Some(dir) = self.dir() else {
-            cx.emit(DocumentEvent::Notify(
-                "Save the document first, so images can be stored next to it.".into(),
-            ));
+            cx.emit(DocumentEvent::Notify(tr!("image.save_first")));
             return;
         };
         let folder = AppSettings::get(cx).image_folder.clone();
@@ -854,9 +850,7 @@ impl DocumentView {
             match store_image(&image, &dir, &folder, &stem) {
                 Ok((relative, alt)) => links.push((relative, alt)),
                 Err(err) => {
-                    cx.emit(DocumentEvent::Notify(
-                        format!("Couldn’t add the image. {err}").into(),
-                    ));
+                    cx.emit(DocumentEvent::Notify(tr!("image.failed", error = err)));
                 }
             }
         }
@@ -903,9 +897,11 @@ impl DocumentView {
         }
         match crate::links::find_heading(&self.analysis.outline, anchor) {
             Some(ix) => self.reveal_heading(ix, window, cx),
-            None => cx.emit(DocumentEvent::Notify(
-                format!("“{}” has no heading “#{anchor}”.", self.name()).into(),
-            )),
+            None => cx.emit(DocumentEvent::Notify(tr!(
+                "links.no_heading",
+                name = self.name(),
+                anchor = anchor
+            ))),
         }
     }
 
@@ -1206,7 +1202,7 @@ impl DocumentView {
                     .pl(inset)
                     .pr(inset)
                     .pt(if focus_mode { rems(4.) } else { rems(1.) })
-                    .aria_label("Markdown source")
+                    .aria_label(tr!("editor.aria"))
                     .context_menu(move |menu, _, cx| {
                         menu_document
                             .read_with(cx, |this, cx| this.context_menu(NativeMenu::new(), cx))
@@ -1292,9 +1288,9 @@ impl DocumentView {
                             div()
                                 .font_weight(gpui_kit::FontWeight::MEDIUM)
                                 .text_color(cx.theme().foreground)
-                                .child("Nothing to preview"),
+                                .child(tr!("preview.empty_title")),
                         )
-                        .child("Markdown you write appears here."),
+                        .child(tr!("preview.empty_body")),
                 )
             })
             .on_prepaint(move |bounds, _, cx| {

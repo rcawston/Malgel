@@ -161,7 +161,7 @@ pub fn render(source: &str, theme: &DiagramTheme, id: &str) -> Result<Diagram, S
     let control = OperationControl::new().with_deadline(DEADLINE);
     match renderer.render(RenderRequest::svg(source, control, request)) {
         Ok(RenderOutput::Svg(Some(svg))) => sized(svg.svg()),
-        Ok(_) => Err("This isn’t a Mermaid diagram Malgel recognizes.".into()),
+        Ok(_) => Err(tr!("diagram.unknown").to_string()),
         Err(err) => Err(describe(&err.to_string())),
     }
 }
@@ -170,7 +170,7 @@ pub fn render(source: &str, theme: &DiagramTheme, id: &str) -> Result<Diagram, S
 fn describe(error: &str) -> String {
     let error = error.trim();
     if error.contains("cancel") || error.contains("deadline") {
-        return "The diagram took too long to lay out.".into();
+        return tr!("diagram.too_long").to_string();
     }
     let first_line = error.lines().next().unwrap_or(error);
     let mut message = first_line.chars().take(240).collect::<String>();
@@ -183,19 +183,21 @@ fn describe(error: &str) -> String {
 /// Give the SVG a pixel size from its viewBox (Mermaid sets `width="100%"`,
 /// which only browsers can resolve).
 fn sized(svg: &str) -> Result<Diagram, String> {
-    let root_end = svg.find('>').ok_or("The diagram came out empty.")?;
+    let root_end = svg
+        .find('>')
+        .ok_or_else(|| tr!("diagram.empty").to_string())?;
     let root = &svg[..root_end];
-    let view_box = attribute(root, "viewBox").ok_or("The diagram came out empty.")?;
+    let view_box = attribute(root, "viewBox").ok_or_else(|| tr!("diagram.empty").to_string())?;
     let numbers: Vec<f32> = view_box
         .split(|ch: char| ch == ',' || ch.is_whitespace())
         .filter(|part| !part.is_empty())
         .filter_map(|part| part.parse().ok())
         .collect();
     let [_, _, width, height] = numbers[..] else {
-        return Err("The diagram came out empty.".into());
+        return Err(tr!("diagram.empty").to_string());
     };
     if !(width > 0. && height > 0.) {
-        return Err("The diagram came out empty.".into());
+        return Err(tr!("diagram.empty").to_string());
     }
     let mut new_root = root.to_string();
     for name in ["width", "height"] {

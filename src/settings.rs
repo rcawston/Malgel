@@ -84,6 +84,8 @@ pub struct Settings {
     pub open_links_in: LinkPlacement,
     /// Ask before opening a web link in the browser.
     pub confirm_web_links: bool,
+    /// Interface language, like `fr`; `None` follows the system.
+    pub language: Option<String>,
 
     /// Hide everything but the text, dimming all but the current paragraph.
     /// Lasts until turned off or Malgel quits.
@@ -112,6 +114,7 @@ impl Default for Settings {
             image_folder: "assets".to_string(),
             open_links_in: LinkPlacement::NewTab,
             confirm_web_links: true,
+            language: None,
             focus_mode: false,
         }
     }

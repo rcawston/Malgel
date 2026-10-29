@@ -113,8 +113,8 @@ pub fn to_docx(
     let mut out = Cursor::new(Vec::new());
     docx.build()
         .pack(&mut out)
-        .map_err(|error| format!("Couldn’t write the document: {error}."))?;
-    finish(out.into_inner()).map_err(|error| format!("Couldn’t write the document: {error}."))
+        .map_err(|error| tr!("error.docx_write", error = error).to_string())?;
+    finish(out.into_inner()).map_err(|error| tr!("error.docx_write", error = error).to_string())
 }
 
 /// Placeholder character style marking a formula image to be lowered by
@@ -317,7 +317,12 @@ impl Writer<'_> {
                         blocks.push(Block::Paragraph(
                             Paragraph::new().add_run(
                                 Run::new()
-                                    .add_text(section.summary.as_deref().unwrap_or("Details"))
+                                    .add_text(
+                                        section
+                                            .summary
+                                            .clone()
+                                            .unwrap_or_else(|| tr!("html.details").to_string()),
+                                    )
                                     .bold(),
                             ),
                         ));

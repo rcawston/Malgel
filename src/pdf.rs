@@ -72,13 +72,13 @@ pub fn to_pdf(
 ) -> Result<Vec<u8>, String> {
     let (markup, files) = to_typst(source, title, base_dir, paper);
     let document = typst_world::compile(markup, files, &typst_world::DOCUMENT_FONTS)
-        .map_err(|error| format!("Couldn’t lay out the document: {error}."))?;
+        .map_err(|error| tr!("error.pdf_layout", error = error).to_string())?;
     typst_pdf::pdf(&document, &typst_pdf::PdfOptions::default()).map_err(|errors| {
         let message = errors
             .first()
             .map(|error| error.message.to_string())
             .unwrap_or_default();
-        format!("Couldn’t write the PDF: {message}.")
+        tr!("error.pdf_write", error = message).to_string()
     })
 }
 
@@ -229,7 +229,12 @@ impl Writer<'_> {
                         Kind::Align(Align::Right) => format!("#align(right)[{body}]"),
                         Kind::Details { .. } => format!(
                             "#strong[{}]\n\n#pad(left: 1em)[{body}]",
-                            escape_markup(section.summary.as_deref().unwrap_or("Details"))
+                            escape_markup(
+                                &section
+                                    .summary
+                                    .clone()
+                                    .unwrap_or_else(|| tr!("html.details").to_string())
+                            )
                         ),
                     })
                 }
