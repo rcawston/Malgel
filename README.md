@@ -18,12 +18,15 @@ A fast, native Markdown editor and previewer written in pure Rust with
 - **Four layouts.** Editor only, editor and preview, preview only, or Live
   Preview (Ctrl+1/2/3/4). Single-pane layouts center a comfortable reading
   column.
-- **Live Preview.** Write in the formatted document, as in Obsidian: the
-  block you are in shows its Markdown, everything else stays rendered.
-  Click a paragraph, list, table or callout to edit it where you clicked;
-  arrow keys move from block to block, and Backspace at the start of a block
-  joins it to the one before. Formatting commands, smart lists and tables,
-  undo and links work as in the editor.
+- **Live Preview.** Write in the formatted document, as in Obsidian. The
+  paragraph, heading, list item or table cell you are in keeps its look;
+  Markdown marks (`**`, `` ` ``, `[…](…)`) appear only around the caret, so
+  a bold word stays bold while you edit it. Click anywhere to edit there;
+  arrow keys move on through items, cells and paragraphs; Enter starts the
+  next list item or paragraph and ends a list or quote from an empty line;
+  Tab nests list items and moves between cells; Ctrl-click (⌘-click) follows
+  a link. Code blocks, callouts and HTML are edited as written. Formatting
+  commands, undo and paste work as in the editor.
 - **Rich preview.** Tables, task lists, strikethrough, fenced code with
   highlighting for 28 languages and a copy button, YAML front matter shown as
   a property list, local images (relative to the document), remote images
@@ -277,7 +280,10 @@ being offered on startup again.
 | `src/main.rs` | Startup: GPUI Kit, HTTP client for images, themes, key bindings, menus, window |
 | `src/workspace.rs` | The window: title bar, tabs, sidebars, status bar, settings, file commands, watching files, the session |
 | `src/document_view.rs` | One document: editor and preview, Live Preview, scroll sync, smart keys and paste, spelling, focus mode, recovery |
-| `src/live.rs` | Live Preview: the blocks of a document, and the block editor standing in the preview |
+| `src/live.rs` | Live Preview: what can be edited where, and the preview plugin that puts the editor there |
+| `src/live_editor.rs` | Live Preview's editor: Markdown drawn formatted and edited in place |
+| `src/live_inline.rs` | The formatting of a piece of Markdown and which of its marks show — pure and tested |
+| `src/live_table.rs` | A table being edited in Live Preview |
 | `src/smart_edit.rs` | List continuation and nesting, table navigation and tidying, paste as link — pure and tested |
 | `src/file_tree.rs` | The file sidebar: creating, renaming, deleting and moving files |
 | `src/spell.rs` | Spell checking of prose with Hunspell dictionaries |

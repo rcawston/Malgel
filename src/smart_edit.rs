@@ -200,6 +200,17 @@ fn marker_text(item: Item) -> String {
     }
 }
 
+/// The marker for the item after one starting with `marker` (`- `, `3. `,
+/// `- [x] `): the next number, an unchecked box. `None` when `marker`
+/// isn't a list item's.
+pub fn next_list_marker(marker: &str) -> Option<String> {
+    let mut item = parse_prefix(marker).item?;
+    if let Marker::Ordered { number, .. } = &mut item.marker {
+        *number += 1;
+    }
+    Some(marker_text(item))
+}
+
 /// Handle Enter at the caret: continue the list item or quote the caret is
 /// in, or end it when the item is empty.
 pub fn enter(text: &str, selection: Range<usize>) -> Option<Edit> {
@@ -931,6 +942,14 @@ pub fn image_markdown(text: &str, offset: usize, relative_path: &str, alt: &str)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gives_the_next_list_marker() {
+        assert_eq!(next_list_marker("- ").as_deref(), Some("- "));
+        assert_eq!(next_list_marker("9. ").as_deref(), Some("10. "));
+        assert_eq!(next_list_marker("* [x] ").as_deref(), Some("* [ ] "));
+        assert_eq!(next_list_marker("text"), None);
+    }
 
     fn apply(text: &str, edit: &Edit) -> String {
         let mut out = text.to_string();

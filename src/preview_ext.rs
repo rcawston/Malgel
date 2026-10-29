@@ -72,13 +72,33 @@ pub fn markdown_extensions(
         body_extensions: with_math(MarkdownExtensions::default()),
         env: env.clone(),
     };
-    // Live Preview's block editor goes in before anything else can claim
-    // the blocks it's editing.
-    let live = crate::live::LiveBlockPlugin::new(live.clone(), preview.downgrade());
+    // Live Preview's editor goes in before anything else can claim the
+    // blocks it's editing. A list item or line with nothing in it yet is
+    // drawn by a view of its own, with a paragraph for the editor.
+    let nested = Arc::new(OnceLock::new());
+    let live = crate::live::LiveBlockPlugin::new(
+        live.clone(),
+        preview.downgrade(),
+        nested.clone(),
+        env.clone(),
+    );
     let extensions = with_math(MarkdownExtensions::default().frontmatter().plugin(live))
         .plugin(gpui_kit::component::text::FrontmatterPlugin::new())
         .plugin(alert);
     _ = full.set(extensions.clone());
+    let placeholder = crate::live::PlaceholderPlugin::new(preview.downgrade());
+    _ = nested.set(
+        with_math(
+            MarkdownExtensions::default()
+                .frontmatter()
+                .plugin(placeholder),
+        )
+        .plugin(gpui_kit::component::text::FrontmatterPlugin::new())
+        .plugin(AlertPlugin {
+            body_extensions: with_math(MarkdownExtensions::default()),
+            env: env.clone(),
+        }),
+    );
     extensions
 }
 
