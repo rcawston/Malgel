@@ -3,7 +3,9 @@
 //! Every command is an Action so the title bar, the menu bar, the editor's
 //! context menu and the keyboard all dispatch the same thing.
 
-use gpui_kit::{Action, App, KeyBinding, SharedString, actions};
+use std::rc::Rc;
+
+use gpui_kit::{Action, App, KeyBinding, KeyBindingContextPredicate, SharedString, actions};
 use serde::Deserialize;
 
 use crate::settings::{Appearance, Layout};
@@ -125,59 +127,69 @@ pub struct AddToDictionary(pub SharedString);
 /// The key context of the workspace view.
 pub const WORKSPACE_CONTEXT: &str = "Workspace";
 
+/// A key binding. `secondary-` is Command on macOS and Control elsewhere,
+/// which GPUI resolves only for bindings loaded with the app.
+pub fn key<A: Action>(keys: &str, action: A, context: Option<&str>, cx: &App) -> KeyBinding {
+    let context = context.map(|context| {
+        Rc::new(KeyBindingContextPredicate::parse(context).expect("a valid key context"))
+    });
+    KeyBinding::load(keys, Box::new(action), context, false, None, cx).expect("a valid key binding")
+}
+
 pub fn bind_keys(cx: &mut App) {
     let workspace = Some(WORKSPACE_CONTEXT);
     // `secondary` is Command on macOS and Control elsewhere.
-    cx.bind_keys([
-        KeyBinding::new("secondary-n", NewFile, None),
-        KeyBinding::new("secondary-o", Open, None),
-        KeyBinding::new("secondary-s", Save, workspace),
-        KeyBinding::new("secondary-shift-s", SaveAs, workspace),
-        KeyBinding::new("secondary-shift-e", ExportHtml, workspace),
-        KeyBinding::new("secondary-w", CloseDocument, workspace),
-        KeyBinding::new("secondary-shift-w", CloseWindow, workspace),
-        KeyBinding::new("ctrl-tab", NextTab, workspace),
-        KeyBinding::new("ctrl-shift-tab", PreviousTab, workspace),
+    let bindings = [
+        key("secondary-n", NewFile, None, cx),
+        key("secondary-o", Open, None, cx),
+        key("secondary-s", Save, workspace, cx),
+        key("secondary-shift-s", SaveAs, workspace, cx),
+        key("secondary-shift-e", ExportHtml, workspace, cx),
+        key("secondary-w", CloseDocument, workspace, cx),
+        key("secondary-shift-w", CloseWindow, workspace, cx),
+        key("ctrl-tab", NextTab, workspace, cx),
+        key("ctrl-shift-tab", PreviousTab, workspace, cx),
         #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-shift-]", NextTab, workspace),
+        key("cmd-shift-]", NextTab, workspace, cx),
         #[cfg(target_os = "macos")]
-        KeyBinding::new("cmd-shift-[", PreviousTab, workspace),
+        key("cmd-shift-[", PreviousTab, workspace, cx),
         #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-pagedown", NextTab, workspace),
+        key("ctrl-pagedown", NextTab, workspace, cx),
         #[cfg(not(target_os = "macos"))]
-        KeyBinding::new("ctrl-pageup", PreviousTab, workspace),
-        KeyBinding::new("secondary-shift-b", ToggleFileSidebar, workspace),
-        KeyBinding::new("secondary-alt-o", ToggleOutline, workspace),
-        KeyBinding::new("secondary-shift-f", ToggleFocusMode, workspace),
-        KeyBinding::new("secondary-alt-c", CopyRichText, workspace),
-        KeyBinding::new("secondary-,", OpenSettings, None),
-        KeyBinding::new("secondary-q", Quit, None),
-        KeyBinding::new("secondary-1", SetLayout(Layout::Editor), workspace),
-        KeyBinding::new("secondary-2", SetLayout(Layout::Split), workspace),
-        KeyBinding::new("secondary-3", SetLayout(Layout::Preview), workspace),
-        KeyBinding::new("secondary-4", SetLayout(Layout::Live), workspace),
+        key("ctrl-pageup", PreviousTab, workspace, cx),
+        key("secondary-shift-b", ToggleFileSidebar, workspace, cx),
+        key("secondary-alt-o", ToggleOutline, workspace, cx),
+        key("secondary-shift-f", ToggleFocusMode, workspace, cx),
+        key("secondary-alt-c", CopyRichText, workspace, cx),
+        key("secondary-,", OpenSettings, None, cx),
+        key("secondary-q", Quit, None, cx),
+        key("secondary-1", SetLayout(Layout::Editor), workspace, cx),
+        key("secondary-2", SetLayout(Layout::Split), workspace, cx),
+        key("secondary-3", SetLayout(Layout::Preview), workspace, cx),
+        key("secondary-4", SetLayout(Layout::Live), workspace, cx),
         // The last binding for an action is the one menus display.
-        KeyBinding::new("secondary-+", ZoomIn, None),
-        KeyBinding::new("secondary-=", ZoomIn, None),
-        KeyBinding::new("secondary--", ZoomOut, None),
-        KeyBinding::new("secondary-0", ZoomReset, None),
-        KeyBinding::new("secondary-shift-l", ToggleAppearance, None),
-        KeyBinding::new("secondary-shift-o", GoToHeading, workspace),
-        KeyBinding::new("secondary-b", Bold, workspace),
-        KeyBinding::new("secondary-i", Italic, workspace),
-        KeyBinding::new("secondary-shift-x", Strikethrough, workspace),
-        KeyBinding::new("secondary-e", InlineCode, workspace),
-        KeyBinding::new("secondary-k", InsertLink, workspace),
-        KeyBinding::new("secondary-shift-c", CodeBlock, workspace),
-        KeyBinding::new("secondary-shift-.", Quote, workspace),
-        KeyBinding::new("secondary-shift-8", BulletList, workspace),
-        KeyBinding::new("secondary-shift-7", NumberedList, workspace),
-        KeyBinding::new("secondary-shift-9", TaskList, workspace),
-        KeyBinding::new("secondary-alt-1", Heading(1), workspace),
-        KeyBinding::new("secondary-alt-2", Heading(2), workspace),
-        KeyBinding::new("secondary-alt-3", Heading(3), workspace),
-        KeyBinding::new("secondary-alt-4", Heading(4), workspace),
-        KeyBinding::new("secondary-alt-5", Heading(5), workspace),
-        KeyBinding::new("secondary-alt-6", Heading(6), workspace),
-    ]);
+        key("secondary-+", ZoomIn, None, cx),
+        key("secondary-=", ZoomIn, None, cx),
+        key("secondary--", ZoomOut, None, cx),
+        key("secondary-0", ZoomReset, None, cx),
+        key("secondary-shift-l", ToggleAppearance, None, cx),
+        key("secondary-shift-o", GoToHeading, workspace, cx),
+        key("secondary-b", Bold, workspace, cx),
+        key("secondary-i", Italic, workspace, cx),
+        key("secondary-shift-x", Strikethrough, workspace, cx),
+        key("secondary-e", InlineCode, workspace, cx),
+        key("secondary-k", InsertLink, workspace, cx),
+        key("secondary-shift-c", CodeBlock, workspace, cx),
+        key("secondary-shift-.", Quote, workspace, cx),
+        key("secondary-shift-8", BulletList, workspace, cx),
+        key("secondary-shift-7", NumberedList, workspace, cx),
+        key("secondary-shift-9", TaskList, workspace, cx),
+        key("secondary-alt-1", Heading(1), workspace, cx),
+        key("secondary-alt-2", Heading(2), workspace, cx),
+        key("secondary-alt-3", Heading(3), workspace, cx),
+        key("secondary-alt-4", Heading(4), workspace, cx),
+        key("secondary-alt-5", Heading(5), workspace, cx),
+        key("secondary-alt-6", Heading(6), workspace, cx),
+    ];
+    cx.bind_keys(bindings);
 }

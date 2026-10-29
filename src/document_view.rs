@@ -13,7 +13,7 @@ use gpui_kit::{
     App, AppContext as _, ClipboardEntry, ClipboardItem, Context, Entity, EntityInputHandler as _,
     EventEmitter, FocusHandle, Focusable as _, HighlightStyle, InteractiveElement as _,
     IntoElement, KeyDownEvent, ListOffset, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, ParentElement as _, Pixels, PlatformInput, Point, Render, ScrollWheelEvent,
+    MouseUpEvent, ParentElement as _, Pixels, PlatformInput, Point, Render, ScrollEvent,
     SharedString, Styled as _, Subscription, Task, Window,
     base::{
         TextView, TextViewState,
@@ -1727,7 +1727,7 @@ impl DocumentView {
                     cx.stop_propagation();
                 }
             }))
-            .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, window, cx| {
+            .on_scroll(cx.listener(|this, event: &ScrollEvent, window, cx| {
                 this.set_scroll_driver(ScrollDriver::Editor);
                 this.editor.update(cx, |editor, cx| {
                     let line_height = editor.line_height().unwrap_or(window.line_height());
@@ -1793,7 +1793,7 @@ impl DocumentView {
             .capture_key_down(cx.listener(|this, _: &KeyDownEvent, _, _| {
                 this.set_scroll_driver(ScrollDriver::Preview)
             }))
-            .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, window, cx| {
+            .on_scroll(cx.listener(|this, event: &ScrollEvent, window, cx| {
                 this.set_scroll_driver(ScrollDriver::Preview);
                 let list = this.preview.read(cx).list_state().clone();
                 if list.viewport_bounds().contains(&event.position) {

@@ -185,7 +185,7 @@ pub fn take_link_clicked() -> bool {
 pub fn on_click(url: &SharedString, event: &ClickEvent, window: &mut Window, cx: &mut App) {
     let alternate = match event {
         ClickEvent::Mouse(click) => match click.up.button {
-            MouseButton::Left => click.up.modifiers.secondary(),
+            MouseButton::Left => click.up.modifiers.secondary(cx),
             MouseButton::Middle => true,
             _ => return,
         },

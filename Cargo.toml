@@ -10,7 +10,7 @@ publish = false
 
 [dependencies]
 # GPUI Kit is the only UI dependency: it re-exports GPUI, GPUI Base and GPUI Component.
-gpui-kit = { version = "0.7.0", features = [
+gpui-kit = { version = "0.8.1", features = [
     "tree-sitter",
     "tree-sitter-markdown",
     "tree-sitter-markdown-inline",
@@ -44,7 +44,7 @@ gpui-kit = { version = "0.7.0", features = [
     "tree-sitter-proto",
 ] }
 # Loads remote (http/https) images referenced by documents, e.g. README badges.
-reqwest_client = { package = "gpui-pre-reqwest-client", version = "=0.3.7" }
+reqwest_client = { package = "gpui-pre-reqwest-client", version = "=0.3.10" }
 # Same Markdown parser the preview uses; drives HTML export and scroll-sync block indexing.
 markdown = "1.0.0"
 serde = { version = "1", features = ["derive"] }
@@ -108,7 +108,7 @@ windows-sys = { version = "0.61", features = ["Win32_UI_Shell"] }
 winresource = { version = "0.1.31", default-features = false }
 
 [dev-dependencies]
-gpui-kit = { version = "0.7.0", features = ["test-support"] }
+gpui-kit = { version = "0.8.1", features = ["test-support"] }
 
 # Dependencies are large (GPUI, tree-sitter grammars, Typst); full debug info
 # for them makes every test binary hundreds of megabytes.

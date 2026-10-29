@@ -13,10 +13,10 @@ use std::{
 
 use gpui_kit::{
     AnyWindowHandle, App, AppContext as _, Bounds, Context, CursorStyle, FocusHandle, Focusable,
-    FontWeight, Global, Image, ImageFormat, InteractiveElement as _, IntoElement, KeyBinding,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _, PinchEvent,
-    Pixels, Point, Render, ScrollDelta, ScrollWheelEvent, SharedString, Size, Styled as _, Task,
-    Window, WindowBounds, WindowKind, WindowOptions, actions,
+    FontWeight, Global, Image, ImageFormat, InteractiveElement as _, IntoElement, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _, PinchEvent, Pixels, Point,
+    Render, ScrollDelta, ScrollEvent, SharedString, Size, Styled as _, Task, Window, WindowBounds,
+    WindowKind, WindowOptions, actions,
     assets::IconName,
     base::ElementExt as _,
     component::{
@@ -30,7 +30,7 @@ use gpui_kit::{
 };
 
 use crate::{
-    actions::{CloseWindow, ZoomIn, ZoomOut, ZoomReset},
+    actions::{CloseWindow, ZoomIn, ZoomOut, ZoomReset, key},
     analysis::content_hash,
     diagram::{self, DiagramTheme},
 };
@@ -69,19 +69,20 @@ const SHARP_DELAY: Duration = Duration::from_millis(120);
 
 pub fn bind_keys(cx: &mut App) {
     let context = Some(KEY_CONTEXT);
-    cx.bind_keys([
-        KeyBinding::new("+", DiagramZoomIn, context),
-        KeyBinding::new("=", DiagramZoomIn, context),
-        KeyBinding::new("-", DiagramZoomOut, context),
-        KeyBinding::new("0", FitDiagram, context),
-        KeyBinding::new("1", ActualSize, context),
-        KeyBinding::new("left", PanLeft, context),
-        KeyBinding::new("right", PanRight, context),
-        KeyBinding::new("up", PanUp, context),
-        KeyBinding::new("down", PanDown, context),
-        KeyBinding::new("escape", CloseWindow, context),
-        KeyBinding::new("secondary-w", CloseWindow, context),
-    ]);
+    let bindings = [
+        key("+", DiagramZoomIn, context, cx),
+        key("=", DiagramZoomIn, context, cx),
+        key("-", DiagramZoomOut, context, cx),
+        key("0", FitDiagram, context, cx),
+        key("1", ActualSize, context, cx),
+        key("left", PanLeft, context, cx),
+        key("right", PanRight, context, cx),
+        key("up", PanUp, context, cx),
+        key("down", PanDown, context, cx),
+        key("escape", CloseWindow, context, cx),
+        key("secondary-w", CloseWindow, context, cx),
+    ];
+    cx.bind_keys(bindings);
 }
 
 /// The open viewer windows, by diagram, so showing a diagram again brings
@@ -395,7 +396,7 @@ impl DiagramViewer {
     // ---------------------------------------------------------------------
     // Input
 
-    fn on_scroll(&mut self, event: &ScrollWheelEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn on_scroll(&mut self, event: &ScrollEvent, window: &mut Window, cx: &mut Context<Self>) {
         match event.delta {
             // A mouse wheel zooms, as in image viewers, a step per notch
             // (which systems count as one to three lines).
@@ -405,7 +406,7 @@ impl DiagramViewer {
                 cx,
             ),
             // Holding Command or Control turns trackpad scrolling into zoom.
-            ScrollDelta::Pixels(delta) if event.modifiers.secondary() => {
+            ScrollDelta::Pixels(delta) if event.modifiers.secondary(cx) => {
                 let factor = (f32::from(delta.y) / 200.).exp();
                 self.zoom_by(factor, Some(event.position), cx)
             }
@@ -572,7 +573,7 @@ impl DiagramViewer {
             } else {
                 CursorStyle::OpenHand
             })
-            .on_scroll_wheel(cx.listener(Self::on_scroll))
+            .on_scroll(cx.listener(Self::on_scroll))
             .on_pinch(cx.listener(|this, event: &PinchEvent, _, cx| this.on_pinch(event, cx)))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))

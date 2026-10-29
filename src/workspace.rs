@@ -1874,6 +1874,8 @@ pub fn open_settings(window: &mut Window, cx: &mut App) {
                 .justify_between()
                 .child(
                     v_flex()
+                        .flex_1()
+                        .min_w_0()
                         .gap_0p5()
                         .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(title))
                         .child(
@@ -1977,6 +1979,8 @@ pub fn open_settings(window: &mut Window, cx: &mut App) {
                         .justify_between()
                         .child(
                             v_flex()
+                                .flex_1()
+                                .min_w_0()
                                 .gap_0p5()
                                 .child(
                                     div()
@@ -2059,6 +2063,8 @@ fn language_row(language: Option<String>, cx: &App) -> impl IntoElement {
         .justify_between()
         .child(
             v_flex()
+                .flex_1()
+                .min_w_0()
                 .gap_0p5()
                 .child(
                     div()
@@ -2152,6 +2158,8 @@ fn default_app_row(status: default_app::Status, cx: &App) -> impl IntoElement {
         .justify_between()
         .child(
             v_flex()
+                .flex_1()
+                .min_w_0()
                 .gap_0p5()
                 .child(
                     div()
