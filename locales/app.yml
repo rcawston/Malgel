@@ -501,6 +501,12 @@ menu.bulleted_list:
   es: "Lista con viñetas"
   zh-CN: "无序列表"
   ja: "箇条書き"
+menu.check_for_updates:
+  en: "Check for updates…"
+  fr: "Rechercher des mises à jour…"
+  es: "Buscar actualizaciones…"
+  zh-CN: "检查更新…"
+  ja: "アップデートを確認…"
 menu.check_spelling:
   en: "Check spelling"
   fr: "Vérifier l’orthographe"
@@ -1035,6 +1041,12 @@ settings.section.links:
   es: "ENLACES"
   zh-CN: "链接"
   ja: "リンク"
+settings.section.updates:
+  en: "UPDATES"
+  fr: "MISES À JOUR"
+  es: "ACTUALIZACIONES"
+  zh-CN: "更新"
+  ja: "アップデート"
 settings.section.workspace:
   en: "WORKSPACE"
   fr: "ESPACE DE TRAVAIL"
@@ -1101,6 +1113,18 @@ settings.title:
   es: "Ajustes"
   zh-CN: "设置"
   ja: "設定"
+settings.updates.description:
+  en: "Check GitHub for a new version on startup."
+  fr: "Rechercher une nouvelle version sur GitHub au démarrage."
+  es: "Busca en GitHub una nueva versión al iniciar."
+  zh-CN: "启动时在 GitHub 上检查新版本。"
+  ja: "起動時に GitHub で新しいバージョンを確認します。"
+settings.updates.title:
+  en: "Check for updates on startup"
+  fr: "Rechercher des mises à jour au démarrage"
+  es: "Buscar actualizaciones al iniciar"
+  zh-CN: "启动时检查更新"
+  ja: "起動時にアップデートを確認"
 settings.wrap.description:
   en: "Wrap long lines in the editor instead of scrolling sideways."
   fr: "Couper les longues lignes dans l’éditeur au lieu de défiler horizontalement."
@@ -1215,6 +1239,54 @@ unsaved.title:
   es: "¿Guardar los cambios en «%{name}»?"
   zh-CN: "要保存对“%{name}”的更改吗？"
   ja: "「%{name}」への変更を保存しますか？"
+update.available_description:
+  en: "You have version %{current}. The release page has what's new and the download for your system."
+  fr: "Vous avez la version %{current}. La page de la version présente les nouveautés et le téléchargement pour votre système."
+  es: "Tienes la versión %{current}. La página de la versión muestra las novedades y la descarga para tu sistema."
+  zh-CN: "你当前的版本是 %{current}。发布页面介绍了新功能，并提供适用于你的系统的下载。"
+  ja: "現在のバージョンは %{current} です。リリースページで新機能を確認し、お使いのシステム向けのファイルをダウンロードできます。"
+update.available_title:
+  en: "Malgel %{version} is available"
+  fr: "Malgel %{version} est disponible"
+  es: "Malgel %{version} está disponible"
+  zh-CN: "Malgel %{version} 已发布"
+  ja: "Malgel %{version} が利用可能です"
+update.download:
+  en: "Go to download"
+  fr: "Aller au téléchargement"
+  es: "Ir a la descarga"
+  zh-CN: "前往下载"
+  ja: "ダウンロードへ"
+update.failed:
+  en: "Couldn't check for updates: %{error}"
+  fr: "Impossible de rechercher des mises à jour : %{error}"
+  es: "No se pudieron buscar actualizaciones: %{error}"
+  zh-CN: "无法检查更新：%{error}"
+  ja: "アップデートを確認できませんでした: %{error}"
+update.later:
+  en: "Later"
+  fr: "Plus tard"
+  es: "Más tarde"
+  zh-CN: "稍后"
+  ja: "後で"
+update.settings_hint:
+  en: "You can turn off checking on startup in Settings."
+  fr: "Vous pouvez désactiver la recherche au démarrage dans les Réglages."
+  es: "Puedes desactivar la búsqueda al iniciar en Ajustes."
+  zh-CN: "可以在设置中关闭启动时检查。"
+  ja: "起動時の確認は設定でオフにできます。"
+update.skip:
+  en: "Skip this version"
+  fr: "Ignorer cette version"
+  es: "Omitir esta versión"
+  zh-CN: "跳过此版本"
+  ja: "このバージョンをスキップ"
+update.up_to_date:
+  en: "Malgel %{version} is the latest version."
+  fr: "Malgel %{version} est la dernière version."
+  es: "Malgel %{version} es la versión más reciente."
+  zh-CN: "Malgel %{version} 已是最新版本。"
+  ja: "Malgel %{version} は最新バージョンです。"
 web_link.dont_ask:
   en: "Don’t ask again for web links"
   fr: "Ne plus demander pour les liens web"

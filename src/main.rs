@@ -42,6 +42,7 @@ mod smart_edit;
 mod spell;
 mod themes;
 mod typst_world;
+mod updates;
 mod workspace;
 
 use std::{path::PathBuf, sync::Arc};
@@ -110,6 +111,7 @@ fn main() {
         });
         cx.on_action(|action: &SetTheme, cx: &mut App| themes::select_theme(&action.0, cx));
         cx.on_action(|_: &About, cx: &mut App| with_window(cx, workspace::open_about));
+        cx.on_action(|_: &CheckForUpdates, cx: &mut App| updates::check(true, cx));
         cx.on_action(|_: &OpenSettings, cx: &mut App| with_window(cx, workspace::open_settings));
 
         // Malgel is a single-window app: closing the window ends it on
@@ -138,6 +140,7 @@ fn main() {
         .detach();
 
         open_window(paths, app_menu_bar, cx);
+        updates::check_on_startup(cx);
         cx.activate(true);
     });
 }
@@ -205,7 +208,7 @@ fn open_window(
 }
 
 /// Run `f` in the main window, where dialogs like Settings belong.
-fn with_window(cx: &mut App, f: impl FnOnce(&mut gpui_kit::Window, &mut App)) {
+pub(crate) fn with_window(cx: &mut App, f: impl FnOnce(&mut gpui_kit::Window, &mut App)) {
     let Some(window) = cx
         .try_global::<MainWindow>()
         .map(|main| main.handle)

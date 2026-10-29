@@ -259,6 +259,17 @@ dictionaries and on macOS those in `~/Library/Spelling` are found too.
 `image_folder` in `settings.json` changes where pasted images go
 (default `assets`).
 
+### Update check
+
+A few seconds after starting, Malgel asks GitHub's API for its latest
+published release and, if it's newer, offers to open the release page.
+That request is all it sends: nothing about you or your documents, and
+nothing is downloaded or installed for you. When no newer release is
+found, or the request fails, it says nothing. Turn it off under
+Settings → Updates; **Help → Check for updates…** (in the Malgel menu on
+macOS) checks at any time. **Skip this version** stops a release from
+being offered on startup again.
+
 ## Project layout
 
 | Path | Purpose |
@@ -289,6 +300,7 @@ dictionaries and on macOS those in `~/Library/Spelling` are found too.
 | `src/html_inline.rs` | Inline HTML tags in the preview, and pairing them up for exports |
 | `src/i18n.rs`, `locales/app.yml` | The interface's language and its text in each language |
 | `src/html_block.rs` | HTML sections (`<details>`, aligned blocks) in the preview and exports, and safe HTML for HTML export |
+| `src/updates.rs` | Checking GitHub for a newer release |
 | `src/menus.rs`, `src/actions.rs` | Menus, actions and key bindings |
 | `src/settings.rs`, `src/themes.rs` | Preferences and theme application |
 | `build.rs`, `packaging/` | Windows exe icon and version info; app icon, bundles and installers |

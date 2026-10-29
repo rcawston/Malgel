@@ -89,6 +89,10 @@ pub struct Settings {
     pub confirm_web_links: bool,
     /// Interface language, like `fr`; `None` follows the system.
     pub language: Option<String>,
+    /// Ask GitHub for a newer release on startup.
+    pub check_for_updates: bool,
+    /// A release not to offer on startup again, like `0.1.4`.
+    pub skipped_version: Option<String>,
 
     /// Hide everything but the text, dimming all but the current paragraph.
     /// Lasts until turned off or Malgel quits.
@@ -118,6 +122,8 @@ impl Default for Settings {
             open_links_in: LinkPlacement::NewTab,
             confirm_web_links: true,
             language: None,
+            check_for_updates: true,
+            skipped_version: None,
             focus_mode: false,
         }
     }

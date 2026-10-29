@@ -26,6 +26,7 @@ actions!(
         PreviousTab,
         Quit,
         About,
+        CheckForUpdates,
         OpenMarkdownGuide,
         ToggleScrollSync,
         ToggleSoftWrap,

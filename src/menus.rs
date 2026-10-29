@@ -252,6 +252,10 @@ pub fn build(cx: &App) -> Vec<Menu> {
     )];
     if !macos {
         help.push(MenuItem::separator());
+        help.push(MenuItem::action(
+            tr!("menu.check_for_updates"),
+            CheckForUpdates,
+        ));
         help.push(MenuItem::action(tr!("menu.about"), About));
     }
 
@@ -261,6 +265,7 @@ pub fn build(cx: &App) -> Vec<Menu> {
             "Malgel",
             vec![
                 MenuItem::action(tr!("menu.about"), About),
+                MenuItem::action(tr!("menu.check_for_updates"), CheckForUpdates),
                 MenuItem::separator(),
                 MenuItem::action(tr!("menu.settings"), OpenSettings),
                 MenuItem::separator(),

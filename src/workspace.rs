@@ -2025,7 +2025,16 @@ pub fn open_settings(window: &mut Window, cx: &mut App) {
                     cx,
                 ))
                 .child(section(tr!("settings.section.files")))
-                .child(default_app_row(default_status, cx)),
+                .child(default_app_row(default_status, cx))
+                .child(section(tr!("settings.section.updates")))
+                .child(row(
+                    "check-for-updates",
+                    tr!("settings.updates.title"),
+                    tr!("settings.updates.description"),
+                    settings.check_for_updates,
+                    |settings, on| settings.check_for_updates = on,
+                    cx,
+                )),
         )
     });
 }
