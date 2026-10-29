@@ -49,7 +49,7 @@ use crate::{
     document::{self, LineEnding, display_name, is_markdown_path},
     document_view::{DocumentEvent, DocumentView},
     docx, export,
-    file_tree::{FileTree, FileTreeEvent},
+    file_tree::{self, FileTree, FileTreeEvent},
     format, i18n,
     links::{self, LinkTarget},
     pdf::{self, Paper},
@@ -140,6 +140,9 @@ impl Workspace {
                 window,
                 |this, _, event, window, cx| match event {
                     FileTreeEvent::Open(path) => this.open_paths(vec![path.clone()], window, cx),
+                    FileTreeEvent::Moved { from, to } => this.files_moved(from, to, window, cx),
+                    FileTreeEvent::Deleted(path) => this.files_deleted(path, window, cx),
+                    FileTreeEvent::Error(message) => this.notify_error(message.clone(), window, cx),
                 },
             ),
             cx.observe_global_in::<AppSettings>(window, |this, window, cx| {
@@ -410,8 +413,19 @@ impl Workspace {
 
     fn sync_file_tree(&self, cx: &mut App) {
         let path = self.active_document().read(cx).path().cloned();
-        self.file_tree
-            .update(cx, |tree, cx| tree.set_active(path, cx));
+        let show_folder = AppSettings::get(cx).file_sidebar;
+        self.file_tree.update(cx, |tree, cx| {
+            // With no folder open, show the document's.
+            if show_folder && tree.root().is_none() {
+                tree.set_root(
+                    path.as_deref()
+                        .and_then(Path::parent)
+                        .map(Path::to_path_buf),
+                    cx,
+                );
+            }
+            tree.set_active(path, cx)
+        });
     }
 
     /// Open `paths`: as tabs when tabs are on, otherwise in place of the
@@ -976,6 +990,55 @@ impl Workspace {
                 }
             }
         }
+    }
+
+    // ---------------------------------------------------------------------
+    // Files changed from the sidebar
+
+    /// Documents (and recent files) in what moved follow it.
+    fn files_moved(&mut self, from: &Path, to: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        for doc in self.documents.clone() {
+            doc.update(cx, |doc, cx| {
+                if let Some(path) = doc
+                    .path()
+                    .and_then(|path| file_tree::moved_path(path, from, to))
+                {
+                    doc.moved_to(path, cx);
+                }
+            });
+        }
+        AppSettings::update(cx, |settings| {
+            for recent in &mut settings.recent_files {
+                if let Some(path) = file_tree::moved_path(recent, from, to) {
+                    *recent = path;
+                }
+            }
+        });
+        self.sync_file_tree(cx);
+        self.save_session(window, cx);
+        cx.notify();
+    }
+
+    /// Documents in what was deleted close, unless they have unsaved
+    /// changes, which stay open to be saved elsewhere.
+    fn files_deleted(&mut self, deleted: &Path, window: &mut Window, cx: &mut Context<Self>) {
+        let closing: Vec<EntityId> = self
+            .documents
+            .iter()
+            .filter(|doc| {
+                let doc = doc.read(cx);
+                !doc.is_dirty() && doc.path().is_some_and(|path| path.starts_with(deleted))
+            })
+            .map(|doc| doc.entity_id())
+            .collect();
+        for id in closing {
+            self.remove_document(id, window, cx);
+        }
+        AppSettings::update(cx, |settings| {
+            settings
+                .recent_files
+                .retain(|recent| !recent.starts_with(deleted))
+        });
     }
 
     // ---------------------------------------------------------------------

@@ -70,6 +70,8 @@ rust-i18n = "4.2"
 resvg = { version = "0.46", default-features = false, features = ["text", "system-fonts", "memmap-fonts"] }
 # System fonts give exported PDFs coverage the bundled fonts lack (CJK, emoji).
 fontdb = "0.23"
+# Files deleted from the sidebar go to the system's trash, to be restored.
+trash = "5"
 # The system locale: the interface's language by default, and A4 or US
 # Letter for exports.
 sys-locale = "0.3"

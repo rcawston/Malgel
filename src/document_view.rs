@@ -436,6 +436,13 @@ impl DocumentView {
     // ---------------------------------------------------------------------
     // Saving and recovery
 
+    /// The file was renamed or moved to `path` (from the file sidebar).
+    pub fn moved_to(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        self.disk = DiskStamp::of(&path);
+        self.path = Some(path);
+        cx.notify();
+    }
+
     /// Write the current text to `path`, which becomes the document's.
     pub fn write_to(&mut self, path: &Path, cx: &mut Context<Self>) -> std::io::Result<()> {
         let text = self.editor.read(cx).value();

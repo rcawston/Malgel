@@ -114,7 +114,10 @@ Windows, the Malgel menu on macOS) or the View menu:
 - **Tabs.** Open documents side by side; Ctrl+Tab and Ctrl+Shift+Tab switch
   between them. Without tabs, opening a file replaces the current one.
 - **File sidebar** (Ctrl+Shift+B). A folder's Markdown and text files as a
-  tree that follows changes on disk; File → Open folder… picks the folder.
+  tree that follows changes on disk; File → Open folder… picks the folder,
+  or it shows the document's. Right-click to create a file or folder,
+  rename one in place or delete it (to the system's trash), and drag files
+  and folders onto a folder to move them. Open documents follow along.
 - **Outline** (Ctrl+Alt+O). The document's headings beside the editor, with
   the section you are in highlighted; click one to jump there.
 - **Spell check.** Unknown words are underlined in prose (code, math, URLs
@@ -257,7 +260,7 @@ dictionaries and on macOS those in `~/Library/Spelling` are found too.
 | `src/workspace.rs` | The window: title bar, tabs, sidebars, status bar, settings, file commands, watching files, the session |
 | `src/document_view.rs` | One document: editor and preview, scroll sync, smart keys and paste, spelling, focus mode, recovery |
 | `src/smart_edit.rs` | List continuation and nesting, table navigation and tidying, paste as link — pure and tested |
-| `src/file_tree.rs` | The file sidebar |
+| `src/file_tree.rs` | The file sidebar: creating, renaming, deleting and moving files |
 | `src/spell.rs` | Spell checking of prose with Hunspell dictionaries |
 | `src/session.rs` | The last session and recovered unsaved changes |
 | `src/rich_copy.rs` | Copy as rich text |
