@@ -15,25 +15,22 @@ use std::{
 };
 
 use gpui_kit::{
-    App, Entity, EntityId, FontWeight, Global, IntoElement, ParentElement as _, Pixels,
+    AnyElement, App, Entity, EntityId, Global, IntoElement, ParentElement as _, Pixels,
     SharedString, Styled as _, WeakEntity, Window,
-    base::TextViewState,
-    component::{
-        ActiveTheme as _,
-        text::{
-            MarkdownExtensions, MarkdownNode, MarkdownParseContext, MarkdownPlugin,
-            markdown_ast::Node,
-        },
+    base::{TextViewState, text::editor_host::parse_markdown},
+    component::text::{
+        MarkdownExtensions, MarkdownNode, MarkdownParseContext, MarkdownPlugin, markdown_ast::Node,
     },
-    div, px, relative,
+    div, px,
 };
 
 use crate::{
     analysis::preview_parse_options,
     html_block::{PreviewEnv, nested_view},
+    live_editor::Frame,
     live_editor::LiveEditor,
     live_inline::Mode,
-    live_table::{self, TableModel},
+    live_table,
 };
 
 /// The top-level blocks of `source`, as byte ranges, without the line
@@ -402,6 +399,21 @@ pub fn editable_at(source: &str, offset: usize) -> Editable {
     }
 }
 
+/// What the editor draws around `editable`'s text.
+pub fn frame_for(source: &str, editable: &Editable) -> Frame {
+    match &editable.target {
+        Target::Heading(level) => Frame::Heading {
+            level: *level,
+            before: neighbors(source, editable.range.start).0,
+        },
+        Target::Raw { code: true } => Frame::Code,
+        Target::Cell { .. } => {
+            live_table::model_at(source, editable).map_or(Frame::Text, Frame::Table)
+        }
+        _ => Frame::Text,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
     Up,
@@ -509,11 +521,22 @@ pub fn utf16_range(text: &str, range: &Range<usize>) -> Range<usize> {
 #[derive(Default)]
 pub struct LiveState {
     editable: Mutex<Option<Editable>>,
+    /// The top-level block holding it, whose other paragraphs are drawn
+    /// so clicks on them can be placed.
+    focus: Mutex<Option<Range<usize>>>,
 }
 
 impl LiveState {
     pub fn set(&self, editable: Option<Editable>) {
         *self.editable.lock().expect("live state poisoned") = editable;
+    }
+
+    pub fn set_focus(&self, focus: Option<Range<usize>>) {
+        *self.focus.lock().expect("live state poisoned") = focus;
+    }
+
+    pub fn focus(&self) -> Option<Range<usize>> {
+        self.focus.lock().expect("live state poisoned").clone()
     }
 
     pub fn get(&self) -> Option<Editable> {
@@ -545,7 +568,7 @@ fn editor_for(preview: &WeakEntity<TextViewState>, cx: &App) -> Option<Entity<Li
 
 /// The block before or after a heading, which sets the space around it.
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum Neighbor {
+pub enum Neighbor {
     None,
     Heading(u8),
     Rule,
@@ -555,26 +578,23 @@ enum Neighbor {
 /// What the plugin keeps on a node it draws.
 #[derive(Debug, Clone)]
 enum Part {
-    /// The editor, standing in for a paragraph.
-    Paragraph,
-    /// The editor, standing in for a heading between these blocks.
-    Heading {
-        level: u8,
-        before: Neighbor,
-        after: Neighbor,
+    /// The editor, standing in for the block: a paragraph, a heading (of
+    /// this level, between blocks of these kinds), a table or a block as
+    /// written. `start` is where what the editor edits starts.
+    Editor {
+        start: usize,
+        heading: Option<(u8, Neighbor, Neighbor)>,
     },
-    /// The editor, with a block as written.
-    Raw {
-        code: bool,
-    },
-    Table(TableModel),
+    /// Another paragraph of the list or quote being edited, starting at
+    /// `start`, drawn the same way so a click on it can be placed.
+    Companion { start: usize },
     /// A block drawn by a view of its own with an empty paragraph the editor
     /// stands in for: an empty list item, or a blank line after the block.
-    Nested {
-        markdown: SharedString,
-        key: usize,
-    },
+    Nested { markdown: SharedString, key: usize },
 }
+
+/// Leaf keys of companion paragraphs start here, past the editor's own.
+const COMPANION_LEAF: u64 = 1 << 40;
 
 /// A paragraph holding only this is where the editor goes in a nested view.
 pub const PLACEHOLDER: &str = "\u{200B}";
@@ -613,7 +633,7 @@ fn neighbor_kind(node: Option<&Node>) -> Neighbor {
 }
 
 /// The blocks before and after the top-level block at `start`.
-fn neighbors(source: &str, start: usize) -> (Neighbor, Neighbor) {
+pub fn neighbors(source: &str, start: usize) -> (Neighbor, Neighbor) {
     let Ok(Node::Root(root)) = markdown::to_mdast(source, &preview_parse_options()) else {
         return (Neighbor::None, Neighbor::None);
     };
@@ -669,21 +689,30 @@ impl MarkdownPlugin for LiveBlockPlugin {
         };
         let overlaps = range.start <= editable.range.end && range.end >= editable.range.start;
         let container = matches!(node, Node::Root(_) | Node::List(_) | Node::ListItem(_));
+        let start = editable.range.start;
         let part = match (&editable.target, node) {
-            (Target::Paragraph, Node::Paragraph(_)) if overlaps => Part::Paragraph,
+            (Target::Paragraph, Node::Paragraph(_)) if overlaps => Part::Editor {
+                start,
+                heading: None,
+            },
             (Target::Heading(level), Node::Heading(_)) if overlaps => {
                 let (before, after) = neighbors(source, range.start - cx.offset());
-                Part::Heading {
-                    level: *level,
-                    before,
-                    after,
+                Part::Editor {
+                    start,
+                    heading: Some((*level, before, after)),
                 }
             }
-            (Target::Raw { code }, _) if range.start == editable.range.start && !container => {
-                Part::Raw { code: *code }
+            (Target::Raw { .. }, _) if range.start == editable.range.start && !container => {
+                Part::Editor {
+                    start,
+                    heading: None,
+                }
             }
             (Target::Cell { table, .. }, Node::Table(_)) if range.start == table.start => {
-                Part::Table(live_table::model(node, source, cx.offset(), &editable)?)
+                Part::Editor {
+                    start,
+                    heading: None,
+                }
             }
             (Target::Empty { block: list }, Node::List(_) | Node::Blockquote(_))
                 if range.start == list.start =>
@@ -710,6 +739,19 @@ impl MarkdownPlugin for LiveBlockPlugin {
                     key: range.start,
                 }
             }
+            (_, Node::Paragraph(_))
+                if !overlaps
+                    && self.state.focus().is_some_and(|focus| {
+                        focus.start <= range.start && range.end <= focus.end
+                    })
+                    && !crate::live_inline::analyze(
+                        cx.node_source(node).unwrap_or_default(),
+                        Mode::Prose,
+                    )
+                    .objects =>
+            {
+                Part::Companion { start: range.start }
+            }
             _ => return None,
         };
         let text = cx.node_source(node).unwrap_or_default().to_string();
@@ -722,27 +764,52 @@ impl MarkdownPlugin for LiveBlockPlugin {
             return div().into_any_element();
         };
         match part {
-            Part::Paragraph => div().w_full().child(editor).into_any_element(),
-            Part::Heading {
-                level,
-                before,
-                after,
-            } => heading(editor, *level, *before, *after, window).into_any_element(),
-            Part::Raw { code: true } => {
-                let theme = cx.theme();
+            Part::Editor { start, heading } => {
+                // Until the preview has parsed the document with the editor
+                // where it now is, a block it still stands in for here is
+                // drawn as the preview draws it, so nothing changes shape.
+                let content = if editor.read(cx).origin() == *start {
+                    editor.into_any_element()
+                } else {
+                    let before = heading.map_or(Neighbor::None, |(_, before, _)| before);
+                    self.as_preview(node.as_markdown(), before, window, cx)
+                };
+                match heading {
+                    Some((level, _, after)) => {
+                        spaced_heading(content, *level, *after, window).into_any_element()
+                    }
+                    None => div().w_full().child(content).into_any_element(),
+                }
+            }
+            Part::Companion { start } => {
+                let source = node.as_markdown();
+                let analysis = crate::live_inline::analyze(source, Mode::Prose);
+                let display = crate::live_inline::Display::new(source, &analysis, None);
+                let key = COMPANION_LEAF + *start as u64;
+                let highlight = gpui_kit::component::ActiveTheme::theme(cx)
+                    .warning
+                    .opacity(0.3);
+                let paragraph = crate::live_editor::paragraph(&display, key, highlight);
+                let render = crate::live_editor::render_context(window, cx);
+                let block = gpui_kit::base::text::editor_host::BlockNode::Paragraph(paragraph);
+                let element =
+                    crate::live_editor::render_after(&block, Neighbor::None, &render, window, cx);
+                let start = *start;
+                let editor = editor.downgrade();
                 div()
                     .w_full()
-                    .px_4()
-                    .py_3()
-                    .rounded(theme.radius)
-                    .bg(theme.muted)
-                    .font_family(theme.mono_font_family.clone())
-                    .text_size(window.rem_size() * 0.875)
-                    .child(editor)
+                    .child(crate::live_editor::LeafProbe::new(
+                        element,
+                        move |mut leaves, cx| {
+                            if let Some(geometry) = leaves.remove(&key) {
+                                _ = editor.update(cx, |editor, _| {
+                                    editor.companion_drawn(start, geometry, display)
+                                });
+                            }
+                        },
+                    ))
                     .into_any_element()
             }
-            Part::Raw { code: false } => div().w_full().child(editor).into_any_element(),
-            Part::Table(model) => live_table::render(model, &editor, window, cx),
             Part::Nested { markdown, key } => {
                 let Some(extensions) = self.nested.get() else {
                     return div().into_any_element();
@@ -772,13 +839,12 @@ fn heading_metrics(level: u8) -> (f32, f32, f32) {
     }
 }
 
-/// The editor standing in for a heading, spaced as GPUI Kit spaces the
-/// heading. The preview takes it for a block of another kind, so the space
-/// it leaves around it is taken back.
-fn heading(
-    editor: Entity<LiveEditor>,
+/// A heading drawn here (it gives itself the space above it), spaced
+/// below as GPUI Kit spaces a heading. The preview takes it for a block of
+/// another kind, so the space it leaves after it is taken back.
+fn spaced_heading(
+    content: AnyElement,
     level: u8,
-    before: Neighbor,
     after: Neighbor,
     window: &Window,
 ) -> impl IntoElement {
@@ -786,14 +852,8 @@ fn heading(
     // GPUI Kit's paragraph gap.
     let gap = window.rem_size() * 0.75;
     let rule = body * 1.6;
-    let (scale, line_height, section) = heading_metrics(level);
+    let (scale, _, _) = heading_metrics(level);
     let size = body * scale;
-    let top = match before {
-        Neighbor::None => px(0.),
-        Neighbor::Heading(_) => size * 0.25,
-        Neighbor::Rule => (size * section - rule).max(px(0.)),
-        Neighbor::Other => (size * section - gap).max(px(0.)),
-    };
     let last = after == Neighbor::None;
     let bottom = if last { px(0.) } else { size * 0.35 };
     let given: Pixels = if last { px(0.) } else { gap };
@@ -808,14 +868,33 @@ fn heading(
         Neighbor::Rule => (rule - gap).max(px(0.)) - (rule - size * 0.35).max(px(0.)),
         _ => px(0.),
     };
-    div()
-        .w_full()
-        .pt(top)
-        .mb(bottom - given - extra)
-        .text_size(size)
-        .line_height(relative(line_height))
-        .font_weight(FontWeight::SEMIBOLD)
-        .child(editor)
+    div().w_full().mb(bottom - given - extra).child(content)
+}
+
+impl LiveBlockPlugin {
+    /// `markdown` drawn as the preview draws it, after a block of the kind
+    /// `before`.
+    fn as_preview(
+        &self,
+        markdown: &str,
+        before: Neighbor,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        let extensions = Arc::new(self.nested.get().cloned().unwrap_or_default());
+        let Ok(blocks) = parse_markdown(markdown, extensions) else {
+            return div().into_any_element();
+        };
+        let render = crate::live_editor::render_context(window, cx);
+        div()
+            .w_full()
+            .children(
+                blocks.iter().map(|block| {
+                    crate::live_editor::render_after(block, before, &render, window, cx)
+                }),
+            )
+            .into_any_element()
+    }
 }
 
 /// Draws the editor in the empty paragraph of a nested view.

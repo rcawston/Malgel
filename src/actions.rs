@@ -14,6 +14,8 @@ actions!(
     malgel,
     [
         NewFile,
+        DeleteCells,
+        ClearCells,
         Open,
         OpenFolder,
         Save,

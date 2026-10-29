@@ -1197,6 +1197,30 @@ status.words_other:
   es: "%{count} palabras"
   zh-CN: "%{count} 字"
   ja: "%{count} 語"
+table.add_column:
+  en: "Add column"
+  fr: "Ajouter une colonne"
+  es: "Añadir columna"
+  zh-CN: "添加列"
+  ja: "列を追加"
+table.add_row:
+  en: "Add row"
+  fr: "Ajouter une ligne"
+  es: "Añadir fila"
+  zh-CN: "添加行"
+  ja: "行を追加"
+table.clear_cells:
+  en: "Clear cells"
+  fr: "Effacer les cellules"
+  es: "Vaciar celdas"
+  zh-CN: "清空单元格"
+  ja: "セルをクリア"
+table.delete_cells:
+  en: "Delete cells"
+  fr: "Supprimer les cellules"
+  es: "Eliminar celdas"
+  zh-CN: "删除单元格"
+  ja: "セルを削除"
 table.no_table:
   en: "Put the caret in a table to tidy it."
   fr: "Placez le curseur dans un tableau pour l’aligner."

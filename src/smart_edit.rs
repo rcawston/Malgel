@@ -6,7 +6,7 @@
 //! selection (byte offsets) to an [`Edit`]. `None` means the assist doesn't
 //! apply and the key should do what it normally does.
 
-use std::ops::Range;
+use std::ops::{Range, RangeInclusive};
 
 use unicode_width::UnicodeWidthStr as _;
 
@@ -823,6 +823,116 @@ fn table_edit(
     }
 }
 
+/// A change to a table's rows and columns.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TableChange {
+    AddColumn,
+    AddRow,
+    /// Delete the cells in these rows (the header is row 0) and columns:
+    /// whole columns or rows go, and anything less is cleared, as there's
+    /// no table with holes. The header row stays, cleared.
+    Delete {
+        rows: RangeInclusive<usize>,
+        columns: RangeInclusive<usize>,
+    },
+    /// Empty the cells in these rows and columns.
+    Clear {
+        rows: RangeInclusive<usize>,
+        columns: RangeInclusive<usize>,
+    },
+}
+
+/// Change the rows and columns of the table holding `caret`, leaving the
+/// caret at the end of the cell `(row, column)` (or the nearest left).
+pub fn change_table(
+    text: &str,
+    caret: usize,
+    change: TableChange,
+    (row, column): (usize, usize),
+) -> Option<Edit> {
+    let lines = line_ranges(text);
+    let caret = caret.min(text.len());
+    let mut table = table_at(text, &lines, line_index(&lines, caret))?;
+    let columns = table.columns();
+    for cells in &mut table.rows {
+        cells.resize(columns, String::new());
+    }
+    table.aligns.resize(columns, Align::None);
+    let range = lines[table.lines.start].start..lines[table.lines.end - 1].end;
+    let clear = |table: &mut Table, rows: &RangeInclusive<usize>, cols: &RangeInclusive<usize>| {
+        for (row_ix, cells) in table.rows.iter_mut().enumerate() {
+            if rows.contains(&row_ix) {
+                for (col, cell) in cells.iter_mut().enumerate() {
+                    if cols.contains(&col) {
+                        cell.clear();
+                    }
+                }
+            }
+        }
+    };
+    let (mut row, mut column) = (row, column);
+    match change {
+        TableChange::AddColumn => {
+            for cells in &mut table.rows {
+                cells.push(String::new());
+            }
+            table.aligns.push(Align::None);
+            column = columns;
+        }
+        TableChange::AddRow => {
+            table.rows.push(vec![String::new(); columns]);
+            row = table.rows.len() - 1;
+        }
+        TableChange::Clear {
+            rows,
+            columns: cols,
+        } => clear(&mut table, &rows, &cols),
+        TableChange::Delete {
+            rows,
+            columns: cols,
+        } => {
+            let last_row = table.rows.len() - 1;
+            let whole_columns = *rows.start() == 0 && *rows.end() >= last_row;
+            let whole_rows = *cols.start() == 0 && *cols.end() >= columns - 1;
+            if whole_columns && whole_rows {
+                // All of it: the table goes.
+                return Some(Edit {
+                    range: range.clone(),
+                    text: String::new(),
+                    selection: range.start..range.start,
+                });
+            } else if whole_columns {
+                for cells in &mut table.rows {
+                    cells.drain(cols.clone());
+                }
+                table.aligns.drain(cols.clone());
+                column = (*cols.start()).min(table.columns() - 1);
+            } else if whole_rows {
+                // The header stays, emptied; body rows go.
+                if *rows.start() == 0 {
+                    clear(&mut table, &(0..=0), &cols);
+                }
+                let body = (*rows.start()).max(1)..=*rows.end();
+                if !body.is_empty() {
+                    table.rows.drain(body);
+                }
+                row = (*rows.start()).min(table.rows.len() - 1);
+            } else {
+                clear(&mut table, &rows, &cols);
+            }
+        }
+    }
+    let (rendered, spans) = table.render();
+    let row = row.min(spans.len() - 1);
+    let span = spans[row][column.min(spans[row].len() - 1)].clone();
+    let at = range.start + span.end;
+    Some(Edit {
+        range,
+        text: rendered,
+        selection: at..at,
+    })
+}
+
 /// Align the table around the caret, keeping the caret in its cell.
 pub fn tidy_table(text: &str, selection: Range<usize>) -> Option<Edit> {
     let lines = line_ranges(text);
@@ -942,6 +1052,69 @@ pub fn image_markdown(text: &str, offset: usize, relative_path: &str, alt: &str)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn changes_tables() {
+        let text = "| A | B |\n|---|--:|\n| 1 | 2 |\n| 3 | 4 |\n";
+        let apply = |change| {
+            let edit = change_table(text, 2, change, (0, 0)).unwrap();
+            let mut out = text.to_string();
+            out.replace_range(edit.range, &edit.text);
+            out
+        };
+        assert_eq!(
+            apply(TableChange::AddColumn),
+            "| A   |   B |     |\n| --- | --: | --- |\n| 1   |   2 |     |\n| 3   |   4 |     |\n"
+        );
+        assert_eq!(
+            apply(TableChange::AddRow),
+            "| A   |   B |\n| --- | --: |\n| 1   |   2 |\n| 3   |   4 |\n|     |     |\n"
+        );
+        // A whole column goes; part of one is cleared.
+        assert_eq!(
+            apply(TableChange::Delete {
+                rows: 0..=2,
+                columns: 1..=1
+            }),
+            "| A   |\n| --- |\n| 1   |\n| 3   |\n"
+        );
+        assert_eq!(
+            apply(TableChange::Delete {
+                rows: 1..=2,
+                columns: 1..=1
+            }),
+            "| A   |   B |\n| --- | --: |\n| 1   |     |\n| 3   |     |\n"
+        );
+        // A whole row goes; the header stays, emptied.
+        assert_eq!(
+            apply(TableChange::Delete {
+                rows: 1..=1,
+                columns: 0..=1
+            }),
+            "| A   |   B |\n| --- | --: |\n| 3   |   4 |\n"
+        );
+        assert_eq!(
+            apply(TableChange::Delete {
+                rows: 0..=1,
+                columns: 0..=1
+            }),
+            "|     |     |\n| --- | --: |\n| 3   |   4 |\n"
+        );
+        assert_eq!(
+            apply(TableChange::Delete {
+                rows: 0..=2,
+                columns: 0..=1
+            }),
+            "\n"
+        );
+        assert_eq!(
+            apply(TableChange::Clear {
+                rows: 0..=0,
+                columns: 0..=0
+            }),
+            "|     |   B |\n| --- | --: |\n| 1   |   2 |\n| 3   |   4 |\n"
+        );
+    }
 
     #[test]
     fn gives_the_next_list_marker() {

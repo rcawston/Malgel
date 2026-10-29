@@ -25,7 +25,9 @@ A fast, native Markdown editor and previewer written in pure Rust with
   arrow keys move on through items, cells and paragraphs; Enter starts the
   next list item or paragraph and ends a list or quote from an empty line;
   Tab nests list items and moves between cells; Ctrl-click (⌘-click) follows
-  a link. Code blocks, callouts and HTML are edited as written. Formatting
+  a link. In a table, the `+` at its right edge or below it adds a column or
+  row; drag across cells and right-click to delete them (whole rows or
+  columns go, anything less is cleared) or clear them. Code blocks, callouts and HTML are edited as written. Formatting
   commands, undo and paste work as in the editor.
 - **Rich preview.** Tables, task lists, strikethrough, fenced code with
   highlighting for 28 languages and a copy button, YAML front matter shown as

@@ -112,6 +112,9 @@ pub struct Analysis {
     pub conceals: Vec<Conceal>,
     /// Links, by the source they span, and where they lead.
     pub links: Vec<(Range<usize>, String)>,
+    /// Whether it has what the preview draws as objects (images, math,
+    /// inline HTML), which are drawn here as written.
+    pub objects: bool,
 }
 
 impl Analysis {
@@ -170,6 +173,7 @@ pub fn analyze(source: &str, mode: Mode) -> Analysis {
         .into_iter()
         .filter_map(|(range, url)| Some((unshield(range, SHIELD.len())?, url)))
         .collect();
+    analysis.objects = shifted.objects;
     analysis.conceals = shifted
         .conceals
         .into_iter()
@@ -278,7 +282,10 @@ fn inlines(children: &[Node], source: &str, out: &mut Analysis) {
             Node::Emphasis(node) => styled(&range, &node.children, Style::italic(), source, out),
             Node::Delete(node) => styled(&range, &node.children, Style::strike(), source, out),
             Node::InlineCode(_) => inline_code(source, &range, out),
-            Node::InlineMath(_) => out.styles.push((range, Style::code())),
+            Node::InlineMath(_) => {
+                out.objects = true;
+                out.styles.push((range, Style::code()))
+            }
             Node::Link(link) => {
                 out.links.push((range.clone(), link.url.clone()));
                 link_like(source, &range, &link.children, out);
@@ -289,10 +296,12 @@ fn inlines(children: &[Node], source: &str, out: &mut Analysis) {
                 inlines(&link.children, source, out);
             }
             Node::Image(_) | Node::ImageReference(_) | Node::FootnoteReference(_) => {
+                out.objects = true;
                 out.styles.push((range, Style::syntax()))
             }
             Node::Break(_) => hard_break(source, &range, out),
             Node::Html(html) => {
+                out.objects = true;
                 let tag = html_inline::parse_tag(&html.value);
                 match tag {
                     Some(tag) if tag.name == "br" => out.conceals.push(Conceal {

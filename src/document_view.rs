@@ -12,9 +12,9 @@ use std::{
 use gpui_kit::{
     App, AppContext as _, ClipboardEntry, ClipboardItem, Context, Entity, EntityInputHandler as _,
     EventEmitter, FocusHandle, Focusable as _, HighlightStyle, InteractiveElement as _,
-    IntoElement, KeyDownEvent, ListOffset, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, ParentElement as _, Pixels, PlatformInput, Point, Render, ScrollEvent,
-    SharedString, Styled as _, Subscription, Task, Window,
+    IntoElement, KeyDownEvent, ListOffset, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, ParentElement as _, Pixels, Point, Render, ScrollEvent, SharedString,
+    Styled as _, Subscription, Task, Window,
     base::{
         TextView, TextViewState,
         input::{Diagnostic, DiagnosticSeverity},
@@ -126,8 +126,6 @@ pub struct DocumentView {
     live_typing: Option<(Instant, usize)>,
     /// Where the last left button press in Live Preview landed.
     live_press: Option<Point<Pixels>>,
-    /// A click being worked out: its row, the row's top and where it was.
-    live_probe: Option<(usize, Pixels, Point<Pixels>)>,
 
     path: Option<PathBuf>,
     line_ending: LineEnding,
@@ -240,6 +238,10 @@ impl DocumentView {
                     let offset = *offset;
                     this.live_open_at(offset, window, cx);
                 }
+                LiveEditorEvent::Table { change, focus } => {
+                    let (change, focus) = (change.clone(), *focus);
+                    this.live_table_change(change, focus, window, cx);
+                }
             },
         ));
 
@@ -262,7 +264,6 @@ impl DocumentView {
             live_redo: Vec::new(),
             live_typing: None,
             live_press: None,
-            live_probe: None,
             preview,
             path: None,
             line_ending: LineEnding::Lf,
@@ -828,11 +829,12 @@ impl DocumentView {
         let local_selection = local(selection.start)..local(selection.end);
         let text = source[range.clone()].to_string();
         let mode = editable.mode();
+        let frame = live::frame_for(&source, &editable);
         let prefix = editable.line_prefix.clone();
         self.live_typing = None;
         self.live_filling = true;
         self.live_editor.update(cx, |editor, cx| {
-            editor.set_value(text, mode, prefix, cx);
+            editor.set_value(text, range.start, mode, frame, prefix, cx);
             editor.set_selected_range(local_selection.clone(), cx);
             editor.focus(window, cx);
         });
@@ -843,6 +845,16 @@ impl DocumentView {
             editor.set_auto_close(false, window, cx);
             editor.set_selected_range(caret..caret, cx);
         });
+        // The block it's in, whose other paragraphs the editor draws too.
+        let focus = match &editable.target {
+            live::Target::Blank { block, .. } | live::Target::Empty { block } => {
+                Some(block.clone())
+            }
+            _ => live::blocks(&source).into_iter().find(|block| {
+                block.start <= editable.range.start && editable.range.start <= block.end
+            }),
+        };
+        self.live_state.set_focus(focus);
         self.live_state.set(Some(editable.clone()));
         self.live_editable = Some(editable);
         self.reparse_preview();
@@ -861,6 +873,7 @@ impl DocumentView {
         self.live_redo.clear();
         self.live_typing = None;
         self.live_state.set(None);
+        self.live_state.set_focus(None);
         self.reparse_preview();
         cx.notify();
     }
@@ -1035,8 +1048,9 @@ impl DocumentView {
             return false;
         }
         if matches!(editable.target, live::Target::Cell { .. }) {
-            // Cells keep to themselves.
-            return true;
+            // Cells keep to themselves, unless cells are selected, which the
+            // editor clears.
+            return !self.live_editor.read(cx).has_cell_selection();
         }
         let source = self.editor.read(cx).value().to_string();
         let line_start = source[..editable.range.start]
@@ -1211,6 +1225,24 @@ impl DocumentView {
         }
     }
 
+    /// Change the rows and columns of the table being edited, then edit
+    /// the cell at `focus` (row, column).
+    fn live_table_change(
+        &mut self,
+        change: smart_edit::TableChange,
+        focus: (usize, usize),
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(editable) = self.live_editable.clone() else {
+            return;
+        };
+        let text = self.editor.read(cx).value().to_string();
+        if let Some(edit) = smart_edit::change_table(&text, editable.range.start, change, focus) {
+            self.apply(edit, window, cx);
+        }
+    }
+
     /// Undo or redo in Live Preview, a step of editing at a time.
     fn live_history(&mut self, redo: bool, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if self.live_editable.is_none() || !self.live_editor.focus_handle(cx).is_focused(window) {
@@ -1272,11 +1304,17 @@ impl DocumentView {
     }
 
     /// A click in Live Preview's rendered text edits what was clicked, at
-    /// the place clicked; links are followed instead.
+    /// the character clicked; links are followed instead.
     fn live_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let press = self.live_press.take();
-        let probe = self.live_probe.take();
         if self.live_editable.is_none() {
+            return;
+        }
+        if self
+            .live_editor
+            .update(cx, |editor, _| editor.take_control_press())
+        {
+            // A button of the editor's own.
             return;
         }
         if crate::links::take_link_clicked() {
@@ -1285,10 +1323,6 @@ impl DocumentView {
             // closing).
             self.live_editor
                 .update(cx, |editor, cx| editor.focus(window, cx));
-            return;
-        }
-        if let Some(probe) = probe {
-            self.live_probed(probe, 10, window, cx);
             return;
         }
         if let Some(range) = self.preview.read(cx).selected_source_range() {
@@ -1300,114 +1334,52 @@ impl DocumentView {
             // Otherwise text was selected, to copy.
             return;
         }
-        // A plain click selects nothing: find the block under it, which the
-        // preview lists one to a row.
         let Some(press) = press else {
             return;
         };
+        if self.live_editor.read(cx).contains(press) {
+            // The editor handles its own clicks.
+            return;
+        }
+        // The block under the click, which the preview lists one to a row.
         let source = self.editor.read(cx).value().to_string();
         let blocks = live::blocks(&source);
         let list = self.preview.read(cx).list_state().clone();
         if list.item_count() != blocks.len() {
             return;
         }
-        let Some((ix, row)) = (0..blocks.len()).find_map(|ix| {
-            let row = list.bounds_for_item(ix)?;
-            (row.top() <= press.y && press.y < row.bottom()).then_some((ix, row))
+        let Some(ix) = (0..blocks.len()).find(|&ix| {
+            list.bounds_for_item(ix)
+                .is_some_and(|row| row.top() <= press.y && press.y < row.bottom())
         }) else {
             return;
         };
         let block = blocks[ix].clone();
-        let open = self
-            .live_editable
-            .as_ref()
-            .map(|editable| match &editable.target {
-                live::Target::Blank { block, .. } | live::Target::Empty { block } => block.clone(),
-                live::Target::Cell { table, .. } => table.clone(),
-                _ => editable.range.clone(),
-            });
-        if open
-            .as_ref()
-            .is_some_and(|open| block.start <= open.start && open.start <= block.end)
+        if self.live_state.focus().as_ref() == Some(&block)
+            && let Some(offset) = self.live_editor.read(cx).locate(press)
         {
-            // What's open draws and handles its own clicks.
+            // Another paragraph of the list or quote being edited, which the
+            // editor draws too.
+            self.live_open_at(offset, window, cx);
             return;
         }
-        let parts: Vec<live::Editable> = live::editables(&source)
-            .into_iter()
-            .filter(|editable| {
-                block.start <= editable.range.start && editable.range.end <= block.end
-            })
-            .collect();
-        match parts.as_slice() {
-            [] => {}
-            [only] => {
-                let only = only.clone();
-                let caret = only.range.end;
-                self.live_open(only, caret..caret, window, cx);
-                self.live_place_caret(ix, row.top(), press, 30, window, cx);
-            }
-            _ => {
-                // A list, quote or table: double-click the preview there to
-                // learn which part, from the word it selects.
-                self.live_probe = Some((ix, row.top(), press));
-                window.defer(cx, move |window, cx| {
-                    for event in [
-                        PlatformInput::MouseDown(MouseDownEvent {
-                            button: MouseButton::Left,
-                            position: press,
-                            modifiers: Modifiers::default(),
-                            click_count: 2,
-                            first_mouse: false,
-                        }),
-                        PlatformInput::MouseUp(MouseUpEvent {
-                            button: MouseButton::Left,
-                            position: press,
-                            modifiers: Modifiers::default(),
-                            click_count: 2,
-                        }),
-                    ] {
-                        window.dispatch_event(event, cx);
-                    }
-                });
-            }
-        }
-    }
-
-    /// The preview has selected the word double-clicked to find what a
-    /// click was on (a frame or so after the click): edit it there.
-    fn live_probed(
-        &mut self,
-        (ix, top, press): (usize, Pixels, Point<Pixels>),
-        frames: u8,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(range) = self.preview.read(cx).selected_source_range() else {
-            if frames > 0 {
-                let document = cx.entity().downgrade();
-                window.on_next_frame(move |window, cx| {
-                    _ = document.update(cx, |this, cx| {
-                        this.live_probed((ix, top, press), frames - 1, window, cx)
-                    });
-                });
-            }
+        // Another block: open it drawn as the preview draws it, then put the
+        // caret where the click landed once it's laid out.
+        let Some(first) = live::editables(&source).into_iter().find(|editable| {
+            block.start <= editable.range.start && editable.range.end <= block.end
+        }) else {
             return;
         };
-        self.preview
-            .update(cx, |preview, cx| preview.clear_selection(cx));
-        self.live_open_at(range.start, window, cx);
-        self.live_place_caret(ix, top, press, 30, window, cx);
+        let caret = first.range.end;
+        self.live_open(first, caret..caret, window, cx);
+        self.live_editor.update(cx, |editor, cx| editor.conceal(cx));
+        self.live_place(press, 20, window, cx);
     }
 
-    /// Once the editor stands where the block in row `ix` was (the row
-    /// then at `top`; it moves when what was open above it closes), click
-    /// it where `press` landed, for the caret to go there. Tries for
-    /// `frames` frames, as the preview parses again first.
-    fn live_place_caret(
+    /// Once what was opened for a click is laid out, edit it where `press`
+    /// landed. Tries for `frames` frames, as the preview parses again first.
+    fn live_place(
         &mut self,
-        ix: usize,
-        top: Pixels,
         press: Point<Pixels>,
         frames: u8,
         window: &mut Window,
@@ -1415,47 +1387,24 @@ impl DocumentView {
     ) {
         let document = cx.entity().downgrade();
         window.on_next_frame(move |window, cx| {
-            let position = document.update(cx, |this, cx| {
-                let row = this.preview.read(cx).list_state().bounds_for_item(ix)?;
-                let Some(bounds) = this.live_editor.read(cx).text_bounds() else {
-                    if frames > 0 {
-                        this.live_place_caret(ix, top, press, frames - 1, window, cx);
+            _ = document.update(cx, |this, cx| {
+                let editor = this.live_editor.read(cx);
+                let offset = editor.text_bounds().and_then(|_| editor.locate(press));
+                match offset {
+                    Some(offset) => this.live_open_at(offset, window, cx),
+                    None if frames > 0 => this.live_place(press, frames - 1, window, cx),
+                    None => {
+                        // Never laid out: just show it.
+                        let at = this
+                            .live_editable
+                            .as_ref()
+                            .map(|editable| editable.range.end);
+                        if let Some(at) = at {
+                            this.live_open_at(at, window, cx);
+                        }
                     }
-                    return None;
-                };
-                // Within the editor, which may be smaller than the block
-                // drawn (a callout's box, an item past its bullet).
-                let inside = |value: Pixels, min: Pixels, max: Pixels| {
-                    value.max(min).min((max - px(1.)).max(min))
-                };
-                Some(point(
-                    inside(press.x, bounds.left(), bounds.right()),
-                    inside(press.y + (row.top() - top), bounds.top(), bounds.bottom()),
-                ))
+                }
             });
-            let Ok(Some(position)) = position else {
-                return;
-            };
-            let modifiers = Modifiers::default();
-            window.dispatch_event(
-                PlatformInput::MouseDown(MouseDownEvent {
-                    button: MouseButton::Left,
-                    position,
-                    modifiers,
-                    click_count: 1,
-                    first_mouse: false,
-                }),
-                cx,
-            );
-            window.dispatch_event(
-                PlatformInput::MouseUp(MouseUpEvent {
-                    button: MouseButton::Left,
-                    position,
-                    modifiers,
-                    click_count: 1,
-                }),
-                cx,
-            );
         });
     }
 

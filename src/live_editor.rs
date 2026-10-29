@@ -2,22 +2,32 @@
 //! it, edited where it stands. Its marks (`**`, `[…](…)`, `` ` ``) show only
 //! around the caret; see [`crate::live_inline`].
 //!
-//! The text is drawn with GPUI's own styled text, inheriting the preview's
-//! font, size and line height; the caret and selection are painted under
-//! it from the same layout, which also maps clicks to characters.
+//! What it edits is drawn by GPUI Kit's own Markdown renderer, as the
+//! preview draws it: the editor hands it the paragraph, heading or table as
+//! a block tree, and gets back where each character went, for the caret,
+//! clicks and input methods.
 
-use std::{ops::Range, time::Duration};
+use std::{
+    collections::HashMap,
+    ops::{Range, RangeInclusive},
+    time::Duration,
+};
 
 use gpui_kit::{
-    App, Bounds, ClipboardItem, Context, ElementInputHandler, EntityInputHandler, EventEmitter,
-    FocusHandle, Focusable, FontStyle, FontWeight, HighlightStyle, InteractiveElement as _,
-    IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _,
-    Pixels, Point, Render, SharedString, StrikethroughStyle, Styled as _, StyledText, Task,
-    TextLayout, UTF16Selection, UnderlineStyle, Window,
-    base::actions::{SelectDown, SelectLeft, SelectRight, SelectUp},
-    canvas,
+    AnyElement, App, Bounds, ClipboardItem, Context, Element, ElementId, ElementInputHandler,
+    Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable, GlobalElementId, Hsla,
+    InspectorElementId, InteractiveElement as _, IntoElement, LayoutId, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _, Pixels, Point, Render,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Task, UTF16Selection, Window,
+    base::{
+        actions::{SelectDown, SelectLeft, SelectRight, SelectUp},
+        text::editor_host::{
+            BlockNode, CodeBlock, ColumnAlign, FlowPosition, InlineNode, LeafGeometry, LinkMark,
+            Paragraph, RenderContext, Table, TextMark, collect_leaf_geometry,
+        },
+    },
     component::{
-        ActiveTheme as _,
+        ActiveTheme as _, Icon, IconName, Sizable as _,
         input::{
             Backspace, Copy, Cut, Delete, DeleteToBeginningOfLine, DeleteToEndOfLine,
             DeleteToNextWordEnd, DeleteToPreviousWordStart, Enter, MoveDown, MoveEnd, MoveHome,
@@ -26,19 +36,53 @@ use gpui_kit::{
             SelectToEndOfLine, SelectToNextWordEnd, SelectToPreviousWordStart, SelectToStart,
             SelectToStartOfLine,
         },
+        menu::ContextMenuExt as _,
+        tooltip::Tooltip,
     },
     div, fill, point, px, size,
 };
+use markdown::mdast::AlignKind;
 
 use crate::{
-    actions::FollowLink,
+    actions::{ClearCells, DeleteCells, FollowLink},
+    live::Neighbor,
     live_inline::{self, Analysis, Display, Mode, Style},
+    live_table::TableModel,
+    smart_edit::TableChange,
 };
 
 const BLINK_INTERVAL: Duration = Duration::from_millis(500);
 
-/// Shown in place of empty text, so it still has a line to stand on.
-const EMPTY: &str = "\u{200B}";
+/// The key the text being edited is laid out under.
+const ACTIVE_LEAF: u64 = 1;
+
+/// The key a table cell not being edited is laid out under.
+fn cell_leaf(row: usize, col: usize) -> u64 {
+    2 + ((row as u64) << 16) + col as u64
+}
+
+/// What the editor draws around the text it edits.
+#[derive(Debug, Clone)]
+pub enum Frame {
+    /// A paragraph, or text edited as written.
+    Text,
+    /// A heading, after a block of this kind.
+    Heading { level: u8, before: Neighbor },
+    /// A code block, fences and all.
+    Code,
+    /// A table; the text is one of its cells.
+    Table(TableModel),
+}
+
+/// A table cell not being edited, drawn by the editor: where its text
+/// starts in the document, and how it was drawn.
+struct Cell {
+    key: u64,
+    row: usize,
+    col: usize,
+    start: usize,
+    display: Display,
+}
 
 pub enum LiveEditorEvent {
     /// The text changed.
@@ -46,7 +90,17 @@ pub enum LiveEditorEvent {
     /// Edit the document at this offset: an unedited table cell or list
     /// item was clicked.
     Activate(usize),
+    /// Change the table's rows and columns, then edit the cell at this row
+    /// and column.
+    Table {
+        change: TableChange,
+        focus: (usize, usize),
+    },
 }
+
+/// The padding of a table cell, as GPUI Kit draws it.
+const CELL_PADDING_X: f32 = 12.;
+const CELL_PADDING_Y: f32 = 7.;
 
 /// Where to put the caret once the editor is drawn.
 #[derive(Debug, Clone, Copy)]
@@ -71,8 +125,31 @@ pub struct LiveEditor {
     /// What continuation lines start with: a list item's indentation, a
     /// quote's `> `.
     line_prefix: String,
-    /// The last frame's layout of the text drawn, and how it maps.
-    drawn: Option<(TextLayout, Display)>,
+    /// What is drawn around the text, and where the text starts in the
+    /// document.
+    frame: Frame,
+    origin: usize,
+    /// Where the last frame laid out the text, and how it maps.
+    drawn: Option<(LeafGeometry, Display)>,
+    /// The table cells drawn besides, and where they were laid out.
+    cells: Vec<Cell>,
+    cell_geometry: HashMap<u64, LeafGeometry>,
+    /// Where the editor was drawn.
+    bounds: Option<Bounds<Pixels>>,
+    /// The other paragraphs of the list or quote being edited, drawn the
+    /// same way, by where they start in the document: where they were laid
+    /// out and how they map, for clicks on them.
+    companions: HashMap<usize, (LeafGeometry, Display)>,
+    /// Drawn as the preview draws it, marks and caret hidden: opened to
+    /// learn where a click on it landed.
+    concealed: bool,
+    /// The table cells selected by dragging: where the drag began and where
+    /// it is, by row and column.
+    cell_anchor: Option<(usize, usize)>,
+    cell_head: Option<(usize, usize)>,
+    /// A button of the editor's own (adding a table row or column) was
+    /// pressed, which isn't a click on the text.
+    control_press: bool,
     selecting: bool,
     caret_on: bool,
     blink: Option<Task<()>>,
@@ -99,7 +176,17 @@ impl LiveEditor {
             marked: None,
             goal_x: None,
             line_prefix: String::new(),
+            frame: Frame::Text,
+            origin: 0,
             drawn: None,
+            cells: Vec::new(),
+            cell_geometry: HashMap::new(),
+            bounds: None,
+            companions: HashMap::new(),
+            concealed: false,
+            cell_anchor: None,
+            cell_head: None,
+            control_press: false,
             selecting: false,
             caret_on: true,
             blink: None,
@@ -116,15 +203,32 @@ impl LiveEditor {
         Display::new(&self.text, &self.analysis, Some(&self.selection))
     }
 
-    /// Show `text` drawn as `mode`, without a change event.
+    /// Where the text being edited starts in the document.
+    pub fn origin(&self) -> usize {
+        self.origin
+    }
+
+    /// Edit `text`, which starts at `origin` in the document, drawn as
+    /// `mode` in `frame`. No change event.
     pub fn set_value(
         &mut self,
         text: String,
+        origin: usize,
         mode: Mode,
+        frame: Frame,
         line_prefix: String,
         cx: &mut Context<Self>,
     ) {
+        // A drag across a table's cells goes on as the next cell opens.
+        if !matches!(frame, Frame::Table(_)) {
+            self.cell_anchor = None;
+            self.selecting = false;
+        }
+        self.cell_head = None;
         self.text = text;
+        self.origin = origin;
+        self.frame = frame;
+        self.companions.clear();
         self.mode = mode;
         self.line_prefix = line_prefix;
         self.analysis = live_inline::analyze(&self.text, mode);
@@ -134,6 +238,8 @@ impl LiveEditor {
         self.goal_x = None;
         self.placement = None;
         self.drawn = None;
+        self.bounds = None;
+        self.concealed = false;
         cx.notify();
     }
 
@@ -180,8 +286,8 @@ impl LiveEditor {
 
     /// The caret's place in the window, if drawn.
     fn caret_point(&self) -> Option<Point<Pixels>> {
-        let (layout, display) = self.drawn.as_ref()?;
-        layout.position_for_index(display.to_display(self.cursor()).min(layout.len()))
+        let (geometry, display) = self.drawn.as_ref()?;
+        Some(geometry.position_for_index(display.to_display(self.cursor())))
     }
 
     fn line_height(&self) -> Option<Pixels> {
@@ -201,6 +307,237 @@ impl LiveEditor {
         } else {
             bounds.bottom() - (caret.y + line_height) < line_height * 0.5
         }
+    }
+
+    /// Draw what's edited as the preview draws it, marks and caret hidden,
+    /// until opened again.
+    pub fn conceal(&mut self, cx: &mut Context<Self>) {
+        self.concealed = true;
+        cx.notify();
+    }
+
+    /// The document offset drawn at `point`: in the text edited, a table
+    /// cell or another paragraph of the list or quote, whichever is nearest.
+    pub fn locate(&self, point: Point<Pixels>) -> Option<usize> {
+        let distance = |bounds: Bounds<Pixels>| {
+            let dy = if point.y < bounds.top() {
+                bounds.top() - point.y
+            } else if point.y > bounds.bottom() {
+                point.y - bounds.bottom()
+            } else {
+                px(0.)
+            };
+            let dx = if point.x < bounds.left() {
+                bounds.left() - point.x
+            } else if point.x > bounds.right() {
+                point.x - bounds.right()
+            } else {
+                px(0.)
+            };
+            (dy, dx)
+        };
+        let mut candidates: Vec<(&LeafGeometry, &Display, usize)> = Vec::new();
+        if let Some((geometry, display)) = &self.drawn {
+            candidates.push((geometry, display, self.origin));
+        }
+        for cell in &self.cells {
+            if let Some(geometry) = self.cell_geometry.get(&cell.key) {
+                candidates.push((geometry, &cell.display, cell.start));
+            }
+        }
+        for (start, (geometry, display)) in &self.companions {
+            candidates.push((geometry, display, *start));
+        }
+        let (geometry, display, start) = candidates.into_iter().min_by(|a, b| {
+            distance(a.0.bounds())
+                .partial_cmp(&distance(b.0.bounds()))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })?;
+        let index = geometry.index_for_position(point);
+        Some(start + display.to_source(index.min(display.text.len())))
+    }
+
+    /// Where another paragraph of the list or quote was laid out.
+    pub fn companion_drawn(&mut self, start: usize, geometry: LeafGeometry, display: Display) {
+        self.companions.insert(start, (geometry, display));
+    }
+
+    /// Whether a button of the editor's own was pressed since last asked.
+    pub fn take_control_press(&mut self) -> bool {
+        std::mem::take(&mut self.control_press)
+    }
+
+    /// The table cell nearest `point` (when a table is being edited): its
+    /// row and column, and the document offset nearest the point in it.
+    fn cell_at(&self, point: Point<Pixels>) -> Option<((usize, usize), usize)> {
+        let Frame::Table(model) = &self.frame else {
+            return None;
+        };
+        let distance = |bounds: Bounds<Pixels>| {
+            let dy = (bounds.top() - point.y)
+                .max(point.y - bounds.bottom())
+                .max(px(0.));
+            let dx = (bounds.left() - point.x)
+                .max(point.x - bounds.right())
+                .max(px(0.));
+            (dy, dx)
+        };
+        let mut candidates: Vec<((usize, usize), &LeafGeometry, &Display, usize)> = Vec::new();
+        if let Some((geometry, display)) = &self.drawn {
+            candidates.push((model.active, geometry, display, self.origin));
+        }
+        for cell in &self.cells {
+            if let Some(geometry) = self.cell_geometry.get(&cell.key) {
+                candidates.push(((cell.row, cell.col), geometry, &cell.display, cell.start));
+            }
+        }
+        let (cell, geometry, display, start) = candidates.into_iter().min_by(|a, b| {
+            distance(a.1.bounds())
+                .partial_cmp(&distance(b.1.bounds()))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })?;
+        let index = geometry.index_for_position(point);
+        Some((
+            cell,
+            start + display.to_source(index.min(display.text.len())),
+        ))
+    }
+
+    /// The cells selected by dragging, as rows and columns.
+    fn selected_cells(&self) -> Option<(RangeInclusive<usize>, RangeInclusive<usize>)> {
+        let (anchor, head) = (self.cell_anchor?, self.cell_head?);
+        (anchor != head).then(|| {
+            (
+                anchor.0.min(head.0)..=anchor.0.max(head.0),
+                anchor.1.min(head.1)..=anchor.1.max(head.1),
+            )
+        })
+    }
+
+    /// Where the selected cells were drawn, padding included.
+    fn selected_cell_bounds(&self) -> Vec<Bounds<Pixels>> {
+        let (Some((rows, cols)), Frame::Table(model), Some(table)) =
+            (self.selected_cells(), &self.frame, self.bounds)
+        else {
+            return Vec::new();
+        };
+        let leaf = |row: usize, col: usize| -> Option<Bounds<Pixels>> {
+            if (row, col) == model.active {
+                return Some(self.drawn.as_ref()?.0.bounds());
+            }
+            let cell = self
+                .cells
+                .iter()
+                .find(|cell| (cell.row, cell.col) == (row, col))?;
+            Some(self.cell_geometry.get(&cell.key)?.bounds())
+        };
+        let columns = model.rows.iter().map(Vec::len).max().unwrap_or(0);
+        if columns == 0 {
+            return Vec::new();
+        }
+        // Each column's text spans this much; where a column's cells start
+        // and end follows from their alignment, as text sits at the padding
+        // on the side it's aligned to.
+        // (start, end, whether every cell's text box spans the column).
+        let spans: Vec<Option<(Pixels, Pixels, bool)>> = (0..columns)
+            .map(|col| {
+                let all: Vec<Bounds<Pixels>> = (0..model.rows.len())
+                    .filter_map(|row| leaf(row, col))
+                    .collect();
+                let start = all.iter().map(|bounds| bounds.left()).reduce(Pixels::min)?;
+                let end = all
+                    .iter()
+                    .map(|bounds| bounds.right())
+                    .reduce(Pixels::max)?;
+                let full = all
+                    .iter()
+                    .all(|bounds| (bounds.right() - end).abs() < px(0.5));
+                Some((start, end, full))
+            })
+            .collect();
+        let align = |col: usize| model.aligns.get(col).copied().unwrap_or(AlignKind::None);
+        let pad = px(CELL_PADDING_X);
+        let mut edges = vec![table.left() + px(1.)];
+        for col in 0..columns - 1 {
+            let (left, right) = (spans[col], spans[col + 1]);
+            let edge = match (align(col), align(col + 1), left, right) {
+                (_, AlignKind::Left | AlignKind::None, _, Some((start, _, _))) => start - pad,
+                (AlignKind::Right, _, Some((_, end, _)), _) => end + pad,
+                (AlignKind::Left | AlignKind::None, _, Some((_, end, true)), _) => end + pad,
+                (_, _, Some((_, end, _)), Some((start, _, _))) => (end + start) / 2.,
+                _ => *edges.last().expect("one edge at least"),
+            };
+            edges.push(edge);
+        }
+        edges.push(table.right() - px(1.));
+        let mut out = Vec::new();
+        for row in rows {
+            // A row is as tall as its tallest cell.
+            let in_row: Vec<Bounds<Pixels>> =
+                (0..columns).filter_map(|col| leaf(row, col)).collect();
+            let (Some(top), Some(bottom)) = (
+                in_row.iter().map(|bounds| bounds.top()).reduce(Pixels::min),
+                in_row
+                    .iter()
+                    .map(|bounds| bounds.bottom())
+                    .reduce(Pixels::max),
+            ) else {
+                continue;
+            };
+            for col in cols.clone() {
+                if col + 1 < edges.len() {
+                    out.push(Bounds::from_corners(
+                        point(edges[col], top - px(CELL_PADDING_Y)),
+                        point(edges[col + 1], bottom + px(CELL_PADDING_Y)),
+                    ));
+                }
+            }
+        }
+        out
+    }
+
+    /// The cells selected, or the one being edited.
+    fn cells_acted_on(&self) -> Option<(RangeInclusive<usize>, RangeInclusive<usize>)> {
+        let Frame::Table(model) = &self.frame else {
+            return None;
+        };
+        self.selected_cells().or(Some((
+            model.active.0..=model.active.0,
+            model.active.1..=model.active.1,
+        )))
+    }
+
+    fn change_table(&mut self, delete: bool, cx: &mut Context<Self>) {
+        let Some((rows, columns)) = self.cells_acted_on() else {
+            return;
+        };
+        let focus = (*rows.start(), *columns.start());
+        let change = if delete {
+            TableChange::Delete { rows, columns }
+        } else {
+            TableChange::Clear { rows, columns }
+        };
+        self.cell_anchor = None;
+        self.cell_head = None;
+        cx.emit(LiveEditorEvent::Table { change, focus });
+    }
+
+    fn delete_cells(&mut self, _: &DeleteCells, _: &mut Window, cx: &mut Context<Self>) {
+        self.change_table(true, cx);
+    }
+
+    fn clear_cells(&mut self, _: &ClearCells, _: &mut Window, cx: &mut Context<Self>) {
+        self.change_table(false, cx);
+    }
+
+    /// Whether table cells are selected (and keys act on them).
+    pub fn has_cell_selection(&self) -> bool {
+        self.selected_cells().is_some()
+    }
+
+    /// Whether the editor was drawn at `point` (and handles a click there).
+    pub fn contains(&self, point: Point<Pixels>) -> bool {
+        self.bounds.is_some_and(|bounds| bounds.contains(&point))
     }
 
     /// Where the caret is drawn, if it is.
@@ -224,10 +561,8 @@ impl LiveEditor {
 
     /// The source offset at a point in the window.
     fn offset_at(&self, position: Point<Pixels>) -> Option<usize> {
-        let (layout, display) = self.drawn.as_ref()?;
-        let index = match layout.index_for_position(position) {
-            Ok(index) | Err(index) => index,
-        };
+        let (geometry, display) = self.drawn.as_ref()?;
+        let index = geometry.index_for_position(position);
         Some(display.to_source(index.min(display.text.len())))
     }
 
@@ -252,6 +587,7 @@ impl LiveEditor {
         let range = self.floor(range.start.min(self.text.len()))
             ..self.floor(range.end.min(self.text.len()));
         self.text.replace_range(range.clone(), new);
+        self.cell_head = None;
         let caret = range.start + new.len();
         self.selection = caret..caret;
         self.reversed = false;
@@ -473,6 +809,10 @@ impl LiveEditor {
     }
 
     fn backspace(&mut self, _: &Backspace, _: &mut Window, cx: &mut Context<Self>) {
+        if self.has_cell_selection() {
+            self.change_table(false, cx);
+            return;
+        }
         let range = if self.selection.is_empty() {
             self.previous(self.selection.start)..self.selection.start
         } else {
@@ -484,6 +824,10 @@ impl LiveEditor {
     }
 
     fn delete(&mut self, _: &Delete, _: &mut Window, cx: &mut Context<Self>) {
+        if self.has_cell_selection() {
+            self.change_table(false, cx);
+            return;
+        }
         let range = if self.selection.is_empty() {
             self.selection.end..self.next(self.selection.end)
         } else {
@@ -575,7 +919,23 @@ impl LiveEditor {
     // Mouse
 
     fn mouse_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(offset) = self.offset_at(event.position) else {
+        // In a table, the cell nearest the click (on its text or not);
+        // another one is edited there, and a drag from it selects cells.
+        let mut offset = None;
+        if let Frame::Table(model) = &self.frame
+            && let Some((cell, at)) = self.cell_at(event.position)
+        {
+            self.cell_anchor = Some(cell);
+            self.cell_head = None;
+            if cell != model.active {
+                self.selecting = true;
+                cx.emit(LiveEditorEvent::Activate(at));
+                cx.stop_propagation();
+                return;
+            }
+            offset = Some(at - self.origin);
+        }
+        let Some(offset) = offset.or_else(|| self.offset_at(event.position)) else {
             return;
         };
         // Command- or Control-click follows a link, as a click does in the
@@ -621,6 +981,19 @@ impl LiveEditor {
         if !self.selecting || event.pressed_button != Some(MouseButton::Left) {
             return;
         }
+        // Dragged into another table cell: select cells.
+        if let Some(anchor) = self.cell_anchor
+            && let Some((cell, _)) = self.cell_at(event.position)
+        {
+            let head = (cell != anchor).then_some(cell);
+            if head != self.cell_head {
+                self.cell_head = head;
+                cx.notify();
+            }
+            if head.is_some() {
+                return;
+            }
+        }
         if let Some(offset) = self.offset_at(event.position) {
             self.select_to(offset, cx);
         }
@@ -634,8 +1007,22 @@ impl LiveEditor {
     // Drawing
 
     /// Called while painting, with what was drawn.
-    fn drawn(&mut self, layout: TextLayout, display: Display, cx: &mut Context<Self>) {
-        self.drawn = Some((layout, display));
+    fn drawn(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        mut leaves: HashMap<u64, LeafGeometry>,
+        cx: &mut Context<Self>,
+    ) {
+        self.bounds = Some(bounds);
+        let display = if self.concealed {
+            Display::new(&self.text, &self.analysis, None)
+        } else {
+            self.display()
+        };
+        self.drawn = leaves
+            .remove(&ACTIVE_LEAF)
+            .map(|geometry| (geometry, display));
+        self.cell_geometry = leaves;
         if let Some(placement) = self.placement.take() {
             let rows = if placement.last_row {
                 let (layout, _) = self.drawn.as_ref().expect("just set");
@@ -657,101 +1044,175 @@ impl LiveEditor {
     }
 }
 
-/// Highlights over ranges of text, and the ranges drawn in another font.
-type Highlights = (
-    Vec<(Range<usize>, HighlightStyle)>,
-    Vec<(Range<usize>, SharedString)>,
-);
-
-/// The highlights and font changes for text drawn with `styles`.
-pub fn highlights(styles: &[(Range<usize>, Style)], cx: &App) -> Highlights {
-    let theme = cx.theme();
-    let mut highlights = Vec::new();
-    let mut fonts = Vec::new();
-    for (range, style) in styles {
-        let mut highlight = HighlightStyle::default();
-        if style.bold {
-            highlight.font_weight = Some(FontWeight::BOLD);
-        }
-        if style.italic {
-            highlight.font_style = Some(FontStyle::Italic);
-        }
-        if style.strike {
-            highlight.strikethrough = Some(StrikethroughStyle {
-                thickness: px(1.),
-                ..Default::default()
-            });
-        }
-        if style.underline || style.link {
-            highlight.underline = Some(UnderlineStyle {
-                thickness: px(1.),
-                ..Default::default()
-            });
-        }
-        if style.link {
-            highlight.color = Some(theme.link);
-        }
-        if style.code {
-            highlight.background_color = Some(theme.accent);
-            fonts.push((range.clone(), theme.mono_font_family.clone()));
-        }
-        if style.mark {
-            highlight.background_color = Some(theme.warning.opacity(0.3));
-        }
-        if style.syntax {
-            highlight.color = Some(theme.muted_foreground);
-        }
-        highlights.push((range.clone(), highlight));
+/// The marks GPUI Kit formats `style` with.
+fn text_mark(style: &Style, highlight: Hsla) -> TextMark {
+    let mut mark = TextMark {
+        bold: style.bold,
+        italic: style.italic,
+        strikethrough: style.strike,
+        underline: style.underline,
+        code: style.code,
+        ..TextMark::default()
+    };
+    if style.link {
+        mark.link = Some(LinkMark {
+            url: "#".into(),
+            ..LinkMark::default()
+        });
     }
-    (highlights, fonts)
+    if style.mark {
+        mark.highlight = Some(highlight);
+    }
+    mark
 }
 
-/// Markdown drawn formatted, without editing (a table cell not being
-/// edited), and how its offsets map.
-pub fn styled_text(source: &str, mode: Mode, cx: &App) -> (StyledText, Display) {
-    let analysis = live_inline::analyze(source, mode);
-    let display = Display::new(source, &analysis, None);
-    let (highlights, fonts) = highlights(&display.styles, cx);
-    let shown = if display.text.is_empty() {
-        SharedString::from(EMPTY)
-    } else {
-        SharedString::from(display.text.clone())
+/// The text drawn, as a paragraph for GPUI Kit to lay out under `key`.
+pub fn paragraph(display: &Display, key: u64, highlight: Hsla) -> Paragraph {
+    let marks = display
+        .styles
+        .iter()
+        .filter_map(|(range, style)| {
+            let mark = text_mark(style, highlight);
+            (mark != TextMark::default()).then(|| (range.clone(), mark))
+        })
+        .collect();
+    let mut paragraph = Paragraph::default();
+    paragraph.push(InlineNode::new(display.text.clone()).marks(marks));
+    paragraph.with_leaf_key(key)
+}
+
+/// Where a block stands: after a block of the kind `before`, ending its
+/// flow (the preview leaves the gap after it).
+pub fn render_after(
+    block: &BlockNode,
+    before: Neighbor,
+    render: &RenderContext,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let previous = match before {
+        Neighbor::None => None,
+        Neighbor::Heading(level) => Some(BlockNode::Heading {
+            level,
+            children: Paragraph::default(),
+            span: None,
+        }),
+        Neighbor::Rule => Some(BlockNode::HorizontalRule { span: None }),
+        Neighbor::Other => Some(BlockNode::Paragraph(Paragraph::default())),
     };
-    let text = StyledText::new(shown)
-        .with_highlights(highlights)
-        .with_font_family_overrides(fonts);
-    (text, display)
+    let flow = match &previous {
+        Some(previous) => FlowPosition::at(&[previous, block], 1, true),
+        None => FlowPosition::at(&[block], 0, true),
+    };
+    block.render(0, flow, render, window, cx)
+}
+
+/// How the preview renders, with link clicks left to the editor.
+pub fn render_context(window: &Window, cx: &App) -> RenderContext {
+    let body = window.text_style().font_size.to_pixels(window.rem_size());
+    RenderContext::from_app(cx)
+        .with_body_font_size(body)
+        .on_link_click(|_, _, _, _| {})
+}
+
+fn column_align(align: AlignKind) -> ColumnAlign {
+    match align {
+        AlignKind::Left => ColumnAlign::Left,
+        AlignKind::Center => ColumnAlign::Center,
+        AlignKind::Right => ColumnAlign::Right,
+        AlignKind::None => ColumnAlign::None,
+    }
 }
 
 impl Render for LiveEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let focused = self.focus_handle.is_focused(window);
-        let display = Display::new(&self.text, &self.analysis, Some(&self.selection));
-        let (highlights, fonts) = highlights(&display.styles, cx);
-        let shown = if display.text.is_empty() {
-            SharedString::from(EMPTY)
+        let focused = self.focus_handle.is_focused(window) && !self.concealed;
+        let display = if self.concealed {
+            Display::new(&self.text, &self.analysis, None)
         } else {
-            SharedString::from(display.text.clone())
+            self.display()
         };
-        let text = StyledText::new(shown)
-            .with_highlights(highlights)
-            .with_font_family_overrides(fonts);
-        let layout = text.layout().clone();
-        let entity = cx.entity();
-        let focus_handle = self.focus_handle.clone();
-        let selection =
-            display.to_display(self.selection.start)..display.to_display(self.selection.end);
-        let caret = display.to_display(self.cursor());
-        let show_caret = focused && self.caret_on;
         let theme = cx.theme();
         let (selection_color, caret_color) = (theme.selection, theme.caret);
+        let highlight = theme.warning.opacity(0.3);
+        let render = render_context(window, cx);
+        let text = paragraph(&display, ACTIVE_LEAF, highlight);
+        self.cells.clear();
+        let (block, before) = match &self.frame {
+            Frame::Text => (BlockNode::Paragraph(text), Neighbor::None),
+            Frame::Heading { level, before } => (
+                BlockNode::Heading {
+                    level: *level,
+                    children: text,
+                    span: None,
+                },
+                *before,
+            ),
+            Frame::Code => (
+                BlockNode::CodeBlock(
+                    CodeBlock::from_code(display.text.clone(), None::<SharedString>)
+                        .with_leaf_key(ACTIVE_LEAF),
+                ),
+                Neighbor::None,
+            ),
+            Frame::Table(model) => {
+                let mut rows = Vec::with_capacity(model.rows.len());
+                for (row_ix, row) in model.rows.iter().enumerate() {
+                    let mut cells = Vec::with_capacity(row.len());
+                    for (col, cell) in row.iter().enumerate() {
+                        if (row_ix, col) == model.active {
+                            cells.push(text.clone());
+                            continue;
+                        }
+                        let analysis = live_inline::analyze(&cell.text, Mode::Prose);
+                        let shown = Display::new(&cell.text, &analysis, None);
+                        let key = cell_leaf(row_ix, col);
+                        cells.push(paragraph(&shown, key, highlight));
+                        self.cells.push(Cell {
+                            key,
+                            row: row_ix,
+                            col,
+                            start: cell.range.start,
+                            display: shown,
+                        });
+                    }
+                    rows.push(cells);
+                }
+                let aligns = model.aligns.iter().copied().map(column_align).collect();
+                (BlockNode::Table(Table::new(rows, aligns)), Neighbor::None)
+            }
+        };
+        let element = render_after(&block, before, &render, window, cx);
+        let selection =
+            display.to_display(self.selection.start)..display.to_display(self.selection.end);
+        let mut decorations = HashMap::new();
+        if !selection.is_empty() && !self.concealed {
+            decorations.insert(ACTIVE_LEAF, vec![(selection, selection_color)]);
+        }
+        let caret = (focused && self.caret_on && !self.has_cell_selection())
+            .then(|| (display.to_display(self.cursor()), caret_color));
+        let table = matches!(self.frame, Frame::Table(_));
+        let probe = Probe {
+            child: Some(element),
+            decorations,
+            editor: cx.entity(),
+            caret,
+            selection: selection_color,
+        };
+        let content = if table {
+            self.table_controls(probe, cx).into_any_element()
+        } else {
+            probe.into_any_element()
+        };
 
-        div()
+        let editor = div()
+            .id("live-editor")
             .key_context("Input")
             .track_focus(&self.focus_handle)
             .w_full()
-            .relative()
             .cursor_text()
+            .on_action(cx.listener(Self::delete_cells))
+            .on_action(cx.listener(Self::clear_cells))
             .on_action(cx.listener(Self::left))
             .on_action(cx.listener(Self::right))
             .on_action(cx.listener(Self::up))
@@ -788,62 +1249,257 @@ impl Render for LiveEditor {
             .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
             .on_mouse_move(cx.listener(Self::mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::mouse_up))
-            .child(
-                canvas(
-                    |_, _, _| {},
-                    move |bounds, _, window, cx| {
-                        let line_height = layout.line_height();
-                        let text_bounds = layout.bounds();
-                        let position = |index: usize| layout.position_for_index(index);
-                        if !selection.is_empty()
-                            && let (Some(start), Some(end)) =
-                                (position(selection.start), position(selection.end))
-                        {
-                            let rows = ((end.y - start.y) / line_height).round() as i32;
-                            for row in 0..=rows {
-                                let top = start.y + line_height * row as f32;
-                                let left = if row == 0 {
-                                    start.x
-                                } else {
-                                    text_bounds.left()
-                                };
-                                let right = if row == rows {
-                                    end.x
-                                } else {
-                                    text_bounds.right()
-                                };
-                                if right > left {
-                                    window.paint_quad(fill(
-                                        Bounds::new(
-                                            point(left, top),
-                                            size(right - left, line_height),
-                                        ),
-                                        selection_color,
-                                    ));
-                                }
-                            }
-                        }
-                        if show_caret && let Some(at) = position(caret) {
-                            window.paint_quad(fill(
-                                Bounds::new(at, size(px(2.), line_height)),
-                                caret_color,
-                            ));
-                        }
-                        window.handle_input(
-                            &focus_handle,
-                            ElementInputHandler::new(bounds, entity.clone()),
-                            cx,
-                        );
-                        let drawn = layout.clone();
-                        entity.update(cx, |this, cx| this.drawn(drawn, display, cx));
-                    },
-                )
+            .child(content);
+        if table {
+            editor
+                .context_menu(|menu, _, _| {
+                    menu.menu(tr!("table.delete_cells"), Box::new(DeleteCells))
+                        .menu(tr!("table.clear_cells"), Box::new(ClearCells))
+                })
+                .into_any_element()
+        } else {
+            editor.into_any_element()
+        }
+    }
+}
+
+impl LiveEditor {
+    /// A table with a strip at its right edge to add a column, shown when
+    /// the pointer reaches it, and one below it to add a row, shown while
+    /// the pointer is over the table.
+    fn table_controls(&self, table: Probe, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        let (hover, radius) = (theme.muted, theme.radius);
+        let control = |id: &'static str, label: SharedString, change: TableChange| {
+            div()
+                .id(id)
                 .absolute()
-                .top_0()
-                .left_0()
-                .size_full(),
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(radius)
+                .cursor_pointer()
+                .opacity(0.)
+                .hover(|style| style.opacity(1.).bg(hover))
+                .child(Icon::new(IconName::Plus).xsmall())
+                .tooltip(move |window, cx| Tooltip::new(label.clone()).build(window, cx))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _, cx| {
+                        this.control_press = true;
+                        cx.stop_propagation();
+                    }),
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    let Frame::Table(model) = &this.frame else {
+                        return;
+                    };
+                    cx.emit(LiveEditorEvent::Table {
+                        change: change.clone(),
+                        focus: model.active,
+                    });
+                }))
+        };
+        div()
+            .relative()
+            .w_full()
+            .group("live-table")
+            .child(table)
+            .child(
+                // Over the last column's padding: the preview clips what
+                // stands beside a block.
+                control(
+                    "add-column",
+                    tr!("table.add_column"),
+                    TableChange::AddColumn,
+                )
+                .top(px(1.))
+                .bottom(px(1.))
+                .right(px(1.))
+                .w(px(12.)),
             )
-            .child(text)
+            .child(
+                control("add-row", tr!("table.add_row"), TableChange::AddRow)
+                    .group_hover("live-table", |style| style.opacity(1.))
+                    .left_0()
+                    .right_0()
+                    .bottom(-px(18.))
+                    .h(px(16.)),
+            )
+    }
+}
+
+/// Lays out `child` and hands where its text leaves went to `drawn`.
+pub struct LeafProbe {
+    child: Option<AnyElement>,
+    #[allow(clippy::type_complexity)]
+    drawn: Option<Box<dyn FnOnce(HashMap<u64, LeafGeometry>, &mut App)>>,
+}
+
+impl LeafProbe {
+    pub fn new(
+        child: AnyElement,
+        drawn: impl FnOnce(HashMap<u64, LeafGeometry>, &mut App) + 'static,
+    ) -> Self {
+        Self {
+            child: Some(child),
+            drawn: Some(Box::new(drawn)),
+        }
+    }
+}
+
+impl IntoElement for LeafProbe {
+    type Element = Self;
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+impl Element for LeafProbe {
+    type RequestLayoutState = AnyElement;
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, AnyElement) {
+        let mut child = self.child.take().expect("laid out once");
+        (child.request_layout(window, cx), child)
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        child: &mut AnyElement,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let (_, leaves) = collect_leaf_geometry(HashMap::new(), || child.prepaint(window, cx));
+        if let Some(drawn) = self.drawn.take() {
+            drawn(leaves, cx);
+        }
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        child: &mut AnyElement,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        child.paint(window, cx);
+    }
+}
+
+/// Lays out the editor's blocks, keeping where its text went, and paints
+/// the caret over them.
+struct Probe {
+    child: Option<AnyElement>,
+    decorations: HashMap<u64, Vec<(Range<usize>, Hsla)>>,
+    editor: Entity<LiveEditor>,
+    /// Where the caret is in the text drawn, and its color.
+    caret: Option<(usize, Hsla)>,
+    /// The color selected table cells are washed with.
+    selection: Hsla,
+}
+
+impl IntoElement for Probe {
+    type Element = Self;
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+impl Element for Probe {
+    type RequestLayoutState = AnyElement;
+    /// The caret's top and height, and the selected table cells.
+    type PrepaintState = (Option<(Point<Pixels>, Pixels)>, Vec<Bounds<Pixels>>);
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, AnyElement) {
+        let mut child = self.child.take().expect("laid out once");
+        (child.request_layout(window, cx), child)
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        child: &mut AnyElement,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self::PrepaintState {
+        let decorations = std::mem::take(&mut self.decorations);
+        let (_, leaves) = collect_leaf_geometry(decorations, || child.prepaint(window, cx));
+        let caret = self.caret.and_then(|(index, _)| {
+            let geometry = leaves.get(&ACTIVE_LEAF)?;
+            let at = geometry.position_for_index(index);
+            let height = geometry.caret_height();
+            let offset = (geometry.line_height() - height) / 2.;
+            Some((point(at.x, at.y + offset), height))
+        });
+        let cells = self.editor.update(cx, |editor, cx| {
+            editor.drawn(bounds, leaves, cx);
+            editor.selected_cell_bounds()
+        });
+        (caret, cells)
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        child: &mut AnyElement,
+        (caret, cells): &mut Self::PrepaintState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        child.paint(window, cx);
+        for cell in cells.iter() {
+            window.paint_quad(fill(*cell, self.selection));
+        }
+        if let (Some((at, height)), Some((_, color))) = (*caret, self.caret) {
+            window.paint_quad(fill(Bounds::new(at, size(px(2.), height)), color));
+        }
+        let focus = self.editor.read(cx).focus_handle.clone();
+        window.handle_input(
+            &focus,
+            ElementInputHandler::new(bounds, self.editor.clone()),
+            cx,
+        );
     }
 }
 
@@ -947,13 +1603,11 @@ impl EntityInputHandler for LiveEditor {
         _: &mut Window,
         _: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
-        let (layout, display) = self.drawn.as_ref()?;
+        let (geometry, display) = self.drawn.as_ref()?;
         let range = self.range_from_utf16(&range_utf16);
-        let start = layout.position_for_index(display.to_display(range.start))?;
-        let end = layout
-            .position_for_index(display.to_display(range.end))
-            .unwrap_or(start);
-        let line_height = layout.line_height();
+        let start = geometry.position_for_index(display.to_display(range.start));
+        let end = geometry.position_for_index(display.to_display(range.end));
+        let line_height = geometry.line_height();
         Some(Bounds::from_corners(
             start,
             point(end.x.max(start.x + px(1.)), end.y + line_height),
