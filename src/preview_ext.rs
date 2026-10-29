@@ -1,5 +1,5 @@
-//! Preview extensions beyond CommonMark and GFM: GitHub alerts, math and
-//! Mermaid diagrams.
+//! Preview extensions beyond CommonMark and GFM: GitHub alerts, math,
+//! Mermaid diagrams and inline HTML (see `html_inline`).
 
 use std::{
     collections::HashMap,
@@ -40,6 +40,9 @@ pub fn markdown_extensions(preview: &gpui_kit::Entity<TextViewState>) -> Markdow
     let diagrams = DiagramCache::new(preview);
     let with_math = |extensions: MarkdownExtensions| {
         extensions
+            // First, so it sees every block before another plugin claims it.
+            .block_parser(crate::html_inline::observe_block)
+            .plugin(crate::html_inline::HtmlInlinePlugin)
             .plugin(BlockMathPlugin {
                 cache: cache.clone(),
             })

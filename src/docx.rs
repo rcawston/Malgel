@@ -19,13 +19,14 @@ use docx_rs::{
     ParagraphBorderPosition, ParagraphBorders, Pic, Run, RunFonts, Shading, SpecialIndentType,
     Start, Style, StyleType, Table, TableBorder, TableBorderPosition, TableBorders, TableCell,
     TableCellBorder, TableCellBorderPosition, TableCellBorders, TableCellMargins, TableRow,
-    WidthType,
+    VertAlignType, WidthType,
 };
 use markdown::mdast::{AlignKind, Node};
 
 use crate::{
     analysis::preview_parse_options,
     diagram::{self, DiagramTheme},
+    html_inline::{self, ExportTag, Group, RawTag, Tag},
     images, math,
     pdf::Paper,
     preview_ext::{AlertKind, display_math_source, is_inline_math, parse_alert},
@@ -208,6 +209,22 @@ struct Marks {
     italic: bool,
     strike: bool,
     link: bool,
+    // From inline HTML tags.
+    underline: bool,
+    highlight: bool,
+    mono: bool,
+    script: Script,
+    /// Text size relative to body text.
+    scale: Option<f32>,
+    color: Option<html_inline::Color>,
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum Script {
+    #[default]
+    Normal,
+    Super,
+    Sub,
 }
 
 struct Writer<'a> {
@@ -370,10 +387,50 @@ impl Writer<'_> {
     }
 
     fn inlines(&mut self, nodes: &[Node], source: &str, marks: Marks) -> Vec<Piece> {
-        nodes
-            .iter()
-            .flat_map(|node| self.inline(node, source, marks))
+        html_inline::group_inlines(nodes)
+            .into_iter()
+            .flat_map(|group| match group {
+                Group::Node(node) => self.inline(node, source, marks),
+                Group::Tagged { tag, open, inner } => self.tagged(tag, &open, inner, source, marks),
+            })
             .collect()
+    }
+
+    /// Text between an inline HTML tag and its closing tag, styled as the
+    /// tag says.
+    fn tagged(
+        &mut self,
+        tag: ExportTag,
+        open: &RawTag,
+        inner: &[Node],
+        source: &str,
+        mut marks: Marks,
+    ) -> Vec<Piece> {
+        match tag {
+            ExportTag::Bold => marks.bold = true,
+            ExportTag::Italic | ExportTag::Run(Tag::Italic) => marks.italic = true,
+            ExportTag::Underline | ExportTag::Run(Tag::Ins) => marks.underline = true,
+            ExportTag::Strike => marks.strike = true,
+            ExportTag::Run(Tag::Small) => marks.scale = Some(0.85),
+            ExportTag::Run(Tag::Big) => marks.scale = Some(1.2),
+            ExportTag::Run(Tag::Sub) => marks.script = Script::Sub,
+            ExportTag::Run(Tag::Sup) => marks.script = Script::Super,
+            ExportTag::Run(Tag::Mark) => marks.highlight = true,
+            ExportTag::Run(Tag::Code | Tag::Kbd) => {
+                marks.mono = true;
+                marks.scale = Some(0.9);
+            }
+            ExportTag::Run(Tag::Q | Tag::Abbr | Tag::Span) => {}
+        }
+        if let Some(color) = open.color() {
+            marks.color = Some(color);
+        }
+        let mut pieces = self.inlines(inner, source, marks);
+        if tag == ExportTag::Run(Tag::Q) {
+            pieces.insert(0, Piece::Run(styled_run("“", marks)));
+            pieces.push(Piece::Run(styled_run("”", marks)));
+        }
+        pieces
     }
 
     fn inline(&mut self, node: &Node, source: &str, marks: Marks) -> Vec<Piece> {
@@ -837,6 +894,31 @@ fn styled_run(text: &str, marks: Marks) -> Run {
     if marks.strike {
         run = run.strike();
     }
+    if marks.underline {
+        run = run.underline("single");
+    }
+    if marks.highlight {
+        run = run.highlight("yellow");
+    }
+    if marks.mono {
+        run = run.fonts(
+            RunFonts::new()
+                .ascii(MONO_FONT)
+                .hi_ansi(MONO_FONT)
+                .cs(MONO_FONT),
+        );
+    }
+    if let Some(scale) = marks.scale {
+        run = run.size(half_points(BODY_SIZE * scale));
+    }
+    match marks.script {
+        Script::Normal => {}
+        Script::Super => run.run_property = run.run_property.vert_align(VertAlignType::SuperScript),
+        Script::Sub => run.run_property = run.run_property.vert_align(VertAlignType::SubScript),
+    }
+    if let Some(color) = marks.color {
+        run = run.color(color.document_hex().to_uppercase());
+    }
     if marks.link {
         run = run.color(LINK_COLOR).underline("single");
     }
@@ -1099,6 +1181,22 @@ mod tests {
             .read_to_string(&mut xml)
             .unwrap();
         xml
+    }
+
+    #[test]
+    fn styles_inline_html() {
+        let source = "Price <small class=\"detail\">(plus **tax**)</small>, H<sub>2</sub>O, x<sup>n</sup>, \
+     <kbd>Ctrl</kbd>, <mark>marked</mark>, <ins>added</ins>, <code>a(b)</code>, \
+     <span style=\"color:#c00\">red</span>, <q>quote</q> and <b>bold</b>.\n";
+        let xml = document_xml(&to_docx(source, "t", None, Paper::A4).unwrap());
+        assert!(xml.contains("w:val=\"superscript\""), "{xml}");
+        assert!(xml.contains("w:val=\"subscript\""));
+        assert!(xml.contains("<w:highlight w:val=\"yellow\""));
+        assert!(xml.contains("w:val=\"CC0000\""));
+        // 11 pt × 0.85, in half-points.
+        assert!(xml.contains("<w:sz w:val=\"19\""));
+        assert!(xml.contains("“") && xml.contains("”"));
+        assert!(!xml.contains("&lt;small"));
     }
 
     #[test]

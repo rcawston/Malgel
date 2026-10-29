@@ -1229,7 +1229,9 @@ impl DocumentView {
     fn render_preview(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let document = cx.weak_entity();
         let base_dir = self.dir().map(Arc::<Path>::from);
-        let inset = column_inset(self.pane_width(self.preview_width, window, cx), cx);
+        let pane_width = self.pane_width(self.preview_width, window, cx);
+        let inset = column_inset(pane_width, cx);
+        crate::html_inline::set_column_width(f32::from(pane_width - inset * 2.));
         let is_empty = self.source.trim().is_empty();
 
         div()

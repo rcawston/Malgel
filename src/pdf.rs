@@ -15,6 +15,7 @@ use typst::foundations::Bytes;
 use crate::{
     analysis::preview_parse_options,
     diagram::{self, DiagramTheme},
+    html_inline::{self, ExportTag, Group, RawTag, Tag},
     images,
     math::MathStyle,
     preview_ext::{AlertKind, display_math_source, is_inline_math, parse_alert},
@@ -381,7 +382,49 @@ impl Writer<'_> {
     }
 
     fn inlines(&mut self, nodes: &[Node], source: &str) -> String {
-        nodes.iter().map(|node| self.inline(node, source)).collect()
+        html_inline::group_inlines(nodes)
+            .into_iter()
+            .map(|group| match group {
+                Group::Node(node) => self.inline(node, source),
+                Group::Tagged { tag, open, inner } => {
+                    let mut markup = self.tagged(tag, &open, inner, source);
+                    if markup.starts_with('#') {
+                        markup.push(';');
+                    }
+                    markup
+                }
+            })
+            .collect()
+    }
+
+    /// Text between an inline HTML tag and its closing tag, styled as the
+    /// tag says.
+    fn tagged(&mut self, tag: ExportTag, open: &RawTag, inner: &[Node], source: &str) -> String {
+        let body = self.inlines(inner, source);
+        let markup = match tag {
+            ExportTag::Bold => format!("#strong[{body}]"),
+            ExportTag::Italic | ExportTag::Run(Tag::Italic) => format!("#emph[{body}]"),
+            ExportTag::Underline | ExportTag::Run(Tag::Ins) => format!("#underline[{body}]"),
+            ExportTag::Strike => format!("#strike[{body}]"),
+            ExportTag::Run(Tag::Small) => format!("#text(size: 0.85em)[{body}]"),
+            ExportTag::Run(Tag::Big) => format!("#text(size: 1.2em)[{body}]"),
+            ExportTag::Run(Tag::Sub) => format!("#sub[{body}]"),
+            ExportTag::Run(Tag::Sup) => format!("#super[{body}]"),
+            ExportTag::Run(Tag::Mark) => format!("#highlight[{body}]"),
+            ExportTag::Run(Tag::Code) => {
+                format!("#raw({})", string_literal(&html_inline::plain_text(inner)))
+            }
+            ExportTag::Run(Tag::Kbd) => format!(
+                "#box(stroke: 0.5pt + luma(170), radius: 2pt, inset: (x: 2pt), outset: (y: 2pt))[#raw({})]",
+                string_literal(&html_inline::plain_text(inner))
+            ),
+            ExportTag::Run(Tag::Q) => format!("“{body}”"),
+            ExportTag::Run(Tag::Abbr | Tag::Span) => body,
+        };
+        match open.color() {
+            Some(color) => format!("#text(fill: rgb(\"#{}\"))[{markup}]", color.document_hex()),
+            None => markup,
+        }
     }
 
     fn inline(&mut self, node: &Node, source: &str) -> String {
@@ -614,6 +657,45 @@ fn front_matter(yaml: &str) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn styles_inline_html() {
+        let source = "Price <small class=\"detail\">(plus **tax**)</small>, H<sub>2</sub>O, x<sup>n</sup>, \
+     <kbd>Ctrl</kbd>, <mark>marked</mark>, <ins>added</ins>, <code>a(b)</code>, \
+     <span style=\"color:#c00\">red</span>, <q>quote</q> and <b>bold</b>.\n";
+        let (markup, _) = to_typst(source, "t", None, Paper::A4);
+        for expected in [
+            "#text(size: 0.85em)[(plus #strong[tax];)]",
+            "#sub[2]",
+            "#super[n]",
+            "#highlight[marked]",
+            "#underline[added]",
+            "#raw(\"a(b)\")",
+            "#text(fill: rgb(\"#cc0000\"))[red]",
+            "“quote”",
+            "#strong[bold]",
+        ] {
+            assert!(
+                markup.contains(expected),
+                "{expected} missing from {markup}"
+            );
+        }
+        assert!(to_pdf(source, "t", None, Paper::A4).is_ok());
+    }
+
+    /// Write `SAMPLE_DIR`/html-sample.{pdf,docx,html} to look at.
+    #[test]
+    #[ignore]
+    fn write_html_samples() {
+        let dir = std::path::PathBuf::from(std::env::var("SAMPLE_DIR").unwrap());
+        let source = std::fs::read_to_string(dir.join("html-sample.md")).unwrap();
+        let pdf = to_pdf(&source, "t", None, Paper::A4).unwrap();
+        std::fs::write(dir.join("html-sample.pdf"), pdf).unwrap();
+        let docx = crate::docx::to_docx(&source, "t", None, Paper::A4).unwrap();
+        std::fs::write(dir.join("html-sample.docx"), docx).unwrap();
+        let html = crate::export::to_html(&source, "t");
+        std::fs::write(dir.join("html-sample.html"), html).unwrap();
+    }
 
     const SAMPLE: &str = r#"---
 title: Sample

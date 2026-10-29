@@ -11,7 +11,7 @@ use markdown::{CompileOptions, Options, mdast::Node};
 use crate::{
     analysis::{content_hash, preview_parse_options},
     diagram::{self, DiagramTheme},
-    images,
+    html_inline, images,
     math::{self, MathStyle},
     preview_ext::{
         AlertKind, DISPLAY_MATH_SCALE, INLINE_MATH_SCALE, display_math_source, is_inline_math,
@@ -286,7 +286,18 @@ impl Exporter {
                     html,
                 });
             }
-            Node::Code(_) | Node::InlineCode(_) | Node::Html(_) | Node::Yaml(_) => {}
+            // Known inline tags (`<small>`, `<sup>`, …) go through, rebuilt
+            // with only harmless attributes; other HTML stays escaped.
+            Node::Html(html) => {
+                if let Some(html) = html_inline::sanitized_tag(&html.value) {
+                    out.push(Replacement {
+                        range,
+                        block: false,
+                        html,
+                    });
+                }
+            }
+            Node::Code(_) | Node::InlineCode(_) | Node::Yaml(_) => {}
             Node::Blockquote(_) => match parse_alert(text) {
                 Some((kind, body)) => {
                     let html = self.alert(kind, &body);
@@ -545,6 +556,23 @@ fn escape(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keeps_known_inline_tags() {
+        let html = to_html(
+            "Price <small class=\"detail\">(plus tax)</small>, H<sub>2</sub>O and \
+             <span onclick=\"x()\" style=\"color:red\">red</span>; <script>x()</script>\n",
+            "t",
+        );
+        assert!(
+            html.contains("<small class=\"detail\">(plus tax)</small>"),
+            "{html}"
+        );
+        assert!(html.contains("H<sub>2</sub>O"));
+        assert!(html.contains("<span style=\"color:#d1242f\">red</span>"));
+        assert!(!html.contains("onclick"));
+        assert!(html.contains("&lt;script&gt;"));
+    }
 
     #[test]
     fn exports_gfm_and_escapes_html() {
