@@ -69,6 +69,17 @@ pub fn shown(node: &Node, source: &str, offset: usize) -> Option<TableModel> {
     })
 }
 
+/// The table `markdown` is, if it's one, with no cell being edited.
+pub fn shown_in(markdown: &str) -> Option<TableModel> {
+    let Ok(Node::Root(root)) = markdown::to_mdast(markdown, &preview_parse_options()) else {
+        return None;
+    };
+    match root.children.as_slice() {
+        [node] => shown(node, markdown, 0),
+        _ => None,
+    }
+}
+
 /// What [`TableModel::active`] is when no cell is being edited.
 pub const NO_CELL: (usize, usize) = (usize::MAX, usize::MAX);
 
@@ -94,4 +105,22 @@ pub fn model_at(source: &str, editable: &Editable) -> Option<TableModel> {
             .is_some_and(|position| position.start.offset == table.start)
     })?;
     model(node, source, 0, editable)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_a_table_alone() {
+        let model = shown_in("| A | B |\n|---|--:|\n| x |   |\n").unwrap();
+        assert_eq!(model.rows.len(), 2);
+        assert_eq!(model.rows[1][0].text, "x");
+        assert!(!model.has_empty_row());
+        let model = shown_in("| A | B |\n|---|---|\n|  |  |\n").unwrap();
+        assert!(model.has_empty_row());
+        assert_eq!(model.active, NO_CELL);
+        assert!(shown_in("Just text.").is_none());
+        assert!(shown_in("| A |\n|---|\n\nAfter.").is_none());
+    }
 }

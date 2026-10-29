@@ -911,11 +911,25 @@ impl LiveBlockPlugin {
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
+        let render = crate::live_editor::render_context(window, cx);
+        // Drawn as the editor draws a table: what's rendered here goes
+        // without plugins, and a table can be one of theirs.
+        if let Some(model) = live_table::shown_in(markdown) {
+            let highlight = gpui_kit::component::ActiveTheme::theme(cx)
+                .warning
+                .opacity(0.3);
+            let block = crate::live_editor::table(&model, highlight);
+            return div()
+                .w_full()
+                .child(crate::live_editor::render_after(
+                    &block, before, &render, window, cx,
+                ))
+                .into_any_element();
+        }
         let extensions = Arc::new(self.nested.get().cloned().unwrap_or_default());
         let Ok(blocks) = parse_markdown(markdown, extensions) else {
             return div().into_any_element();
         };
-        let render = crate::live_editor::render_context(window, cx);
         div()
             .w_full()
             .children(
